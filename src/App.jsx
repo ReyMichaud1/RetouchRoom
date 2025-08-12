@@ -35,7 +35,7 @@ const UPLOAD_PRESET = "retouch-markup";
 const CLOUD_ROOT = "retouch";
 
 /* ────────────────────────────────────────────────────────────────
-   Shared-Login via env (change in Vercel → Environment Variables)
+   Shared-Login via env (set in Vercel → Environment Variables)
    VITE_SHARED_USERNAME="Markup,ClientA"  (comma list allowed)
    VITE_SHARED_DOMAIN="retouch.local"
 ──────────────────────────────────────────────────────────────── */
@@ -274,18 +274,25 @@ function Login() {
    Home (Projects → Folders → Images)
 ──────────────────────────────────────────────────────────────── */
 function Home() {
+  // Projects
   const [projects, setProjects] = useState([]);
   const [projectName, setProjectName] = useState("");
   const [dropboxLink, setDropboxLink] = useState("");
   const [activeProjectId, setActiveProjectId] = useState(null);
 
+  // Add: deleting state for confirm + spinner
+  const [deletingProjectId, setDeletingProjectId] = useState(null);
+
+  // Folders
   const [folders, setFolders] = useState([]);
   const [folderName, setFolderName] = useState(isoDate());
   const [activeFolderId, setActiveFolderId] = useState(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
 
+  // Images
   const [images, setImages] = useState([]);
 
+  // Upload UI + toast
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
@@ -296,6 +303,7 @@ function Home() {
     showNotice.tid = window.setTimeout(() => setNotice(null), 2800);
   };
 
+  /** Projects live */
   useEffect(() => {
     const qy = query(collection(db, "projects"), orderBy("createdAt", "desc"));
     const stop = onSnapshot(qy, (snap) => {
@@ -306,6 +314,7 @@ function Home() {
     return () => stop();
   }, [activeProjectId]);
 
+  /** Folders live */
   useEffect(() => {
     if (!activeProjectId) {
       setFolders([]);
@@ -321,6 +330,7 @@ function Home() {
     return () => stop();
   }, [activeProjectId, activeFolderId]);
 
+  /** Images live */
   useEffect(() => {
     if (!activeProjectId || !activeFolderId) {
       setImages([]);
@@ -334,6 +344,7 @@ function Home() {
     return () => stop();
   }, [activeProjectId, activeFolderId]);
 
+  /** Actions */
   const createProject = async () => {
     const name = projectName.trim();
     if (!name) return;
@@ -347,9 +358,20 @@ function Home() {
     setActiveProjectId(ref.id);
   };
 
-  const deleteProject = async (id) => {
-    await deleteDoc(doc(db, "projects", id));
-    if (id === activeProjectId) setActiveProjectId(null);
+  // Confirm before deleting a project
+  const deleteProject = async (id, name) => {
+    const ok = window.confirm(`Are you sure you want to delete the project “${name}”? This cannot be undone.`);
+    if (!ok) return;
+
+    try {
+      setDeletingProjectId(id);
+      await deleteDoc(doc(db, "projects", id));
+      if (id === activeProjectId) setActiveProjectId(null);
+    } catch (e) {
+      alert(e.message || "Failed to delete project");
+    } finally {
+      setDeletingProjectId(null);
+    }
   };
 
   const createFolder = async () => {
@@ -371,6 +393,7 @@ function Home() {
     }
   };
 
+  // Upload to Cloudinary then save metadata to Firestore
   const handleUpload = async (fileList) => {
     if (!activeProjectId || !activeFolderId) return alert("Select a project and folder first.");
     const files = Array.from(fileList || []);
@@ -396,16 +419,19 @@ function Home() {
           showNotice(data.error?.message || "Cloudinary upload failed", "err");
           continue;
         }
-        await addDoc(collection(db, "projects", activeProjectId, "folders", activeFolderId, "images"), {
-          url: data.secure_url,
-          publicId: data.public_id,
-          format: data.format,
-          bytes: data.bytes,
-          width: data.width,
-          height: data.height,
-          name: file.name,
-          uploadedAt: serverTimestamp(),
-        });
+        await addDoc(
+          collection(db, "projects", activeProjectId, "folders", activeFolderId, "images"),
+          {
+            url: data.secure_url,
+            publicId: data.public_id,
+            format: data.format,
+            bytes: data.bytes,
+            width: data.width,
+            height: data.height,
+            name: file.name,
+            uploadedAt: serverTimestamp(),
+          }
+        );
       }
       const n = files.length;
       showNotice(`Uploaded ${n} file${n > 1 ? "s" : ""} ✅`, "ok");
@@ -414,6 +440,7 @@ function Home() {
     }
   };
 
+  /** DnD */
   const onDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); };
   const onDragOver  = (e) => { e.preventDefault(); e.stopPropagation(); };
   const onDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) setIsDragging(false); };
@@ -424,6 +451,7 @@ function Home() {
 
   return (
     <main className="wrap" style={{ height: "100%", overflow: "auto" }}>
+      {/* Projects */}
       {!activeProject && (
         <>
           <section className="card">
@@ -448,7 +476,13 @@ function Home() {
                   )}
                   <div className="spacer" />
                   <button onClick={() => setActiveProjectId(p.id)}>{activeProjectId === p.id ? "Active" : "Open"}</button>
-                  <button className="danger" onClick={() => deleteProject(p.id)}>Delete</button>
+                  <button
+                    className="danger"
+                    onClick={() => deleteProject(p.id, p.name)}
+                    disabled={deletingProjectId === p.id}
+                  >
+                    {deletingProjectId === p.id ? "Deleting…" : "Delete"}
+                  </button>
                 </div>
               ))
             )}
@@ -456,6 +490,7 @@ function Home() {
         </>
       )}
 
+      {/* Folders */}
       {activeProject && !activeFolder && (
         <>
           <section className="card">
@@ -485,6 +520,7 @@ function Home() {
         </>
       )}
 
+      {/* Images */}
       {activeProject && activeFolder && (
         <>
           <section className="card">
@@ -509,7 +545,7 @@ function Home() {
                 onChange={(e) => handleUpload(e.target.files)}
               />
               <small className="muted" style={{ display: "block", marginTop: 8 }}>
-                Cloudinary path: <code>{CLOUD_ROOT}/{activeProjectId}/{activeFolder?.name}</code>
+                Cloudinary path: <code>{CLOUD_ROOT}/{activeProjectId}/{activeFolder.name}</code>
               </small>
             </div>
           </section>
@@ -585,8 +621,6 @@ function ImageViewer() {
   const [refFile, setRefFile] = useState(null);
   const [refPreview, setRefPreview] = useState(null);
   const [selectedCommentId, setSelectedCommentId] = useState(null);
-
-  const [isCommentDrag, setIsCommentDrag] = useState(false);
 
   // edit state
   const [editingId, setEditingId] = useState(null);
@@ -803,6 +837,7 @@ function ImageViewer() {
     await setDoc(newRef, { color, size: brush, path: finalPath, bbox, createdAt: serverTimestamp() });
   };
 
+  // Select via click on canvas (only in select mode)
   const scrollToFirstCommentFor = (mid) => {
     if (!mid || comments.length === 0) return;
     const target = comments.find((c) => c.markupId === mid);
@@ -829,6 +864,7 @@ function ImageViewer() {
     }
   };
 
+  // Keyboard shortcuts
   useEffect(() => {
     const onKey = async (e) => {
       const tag = (e.target?.tagName || "").toLowerCase();
@@ -837,12 +873,12 @@ function ImageViewer() {
       const k = e.key.toLowerCase();
       if (k === "v") setMode("select");
       if (k === "h") setMode("pan");
-      if (k === "b") setMode("draw");
+      if (k === "b") setMode("draw"); // pencil
       if (k === "t") setToolboxOpen((s) => !s);
 
       if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedCommentId) {
-          const linked = comments.find((c) => c.id === selectedCommentId)?.markupId || null;
+          const linked = comments.find(c => c.id === selectedCommentId)?.markupId || null;
           await deleteComment(selectedCommentId, linked);
         } else if (selectedMarkupId) {
           await deleteSelectedMarkup();
@@ -882,12 +918,12 @@ function ImageViewer() {
   const clearRef = () => { setRefFile(null); if (refPreview) URL.revokeObjectURL(refPreview); setRefPreview(null); };
 
   // Drag-and-drop onto the comment box
-  const [isCommentDragOver, setIsCommentDragOver] = useState(false);
-  const onCommentDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); setIsCommentDrag(true); setIsCommentDragOver(true); };
+  const [isCommentDrag, setIsCommentDrag] = useState(false);
+  const onCommentDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); setIsCommentDrag(true); };
   const onCommentDragOver = (e) => { e.preventDefault(); e.stopPropagation(); };
-  const onCommentDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) { setIsCommentDrag(false); setIsCommentDragOver(false); } };
+  const onCommentDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) setIsCommentDrag(false); };
   const onCommentDrop = (e) => {
-    e.preventDefault(); e.stopPropagation(); setIsCommentDrag(false); setIsCommentDragOver(false);
+    e.preventDefault(); e.stopPropagation(); setIsCommentDrag(false);
     const f = e.dataTransfer?.files?.[0]; if (!f) return;
     if (!f.type.startsWith("image/")) { showNotice("Please drop an image file.", "err"); return; }
     clearRef(); setRefFile(f); setRefPreview(URL.createObjectURL(f)); showNotice("Reference image attached ✅", "ok");
@@ -921,44 +957,63 @@ function ImageViewer() {
       else { alert(data.error?.message || "Reference image upload failed"); return; }
     }
 
-    await addDoc(collection(db, "projects", projectId, "folders", folderId, "images", imageId, "comments"), {
-      markupId: selectedMarkupId, text: text || null, link: linkUrl.trim() || null, refImageUrl, refImageId, createdAt: serverTimestamp(),
-    });
+    await addDoc(
+      collection(db, "projects", projectId, "folders", folderId, "images", imageId, "comments"),
+      { markupId: selectedMarkupId, text: text || null, link: linkUrl.trim() || null, refImageUrl, refImageId, createdAt: serverTimestamp() }
+    );
 
     setCommentText(""); setLinkUrl(""); clearRef(); showNotice("Comment added ✅", "ok"); commentBoxRef.current?.focus();
   };
 
+  // Delete comment (optionally also delete its markup + all comments)
   const deleteComment = async (cid, linkedMarkupId) => {
     const confirm1 = window.confirm("Delete this comment?"); if (!confirm1) return;
     let also = false; if (linkedMarkupId) also = window.confirm("Also delete its linked markup AND all comments linked to that markup?");
     try {
-      if (also) { await deleteMarkupAndComments(linkedMarkupId); }
-      else {
+      if (also) {
+        await deleteMarkupAndComments(linkedMarkupId);
+      } else {
         await deleteDoc(doc(db, "projects", projectId, "folders", folderId, "images", imageId, "comments", cid));
         if (selectedCommentId === cid) setSelectedCommentId(null);
       }
-    } catch (e) { alert(e.message || "Failed to delete"); }
+    } catch (e) {
+      alert(e.message || "Failed to delete");
+    }
   };
 
-  const deleteSelectedMarkup = async () => { if (!selectedMarkupId) return; await deleteMarkupAndComments(selectedMarkupId); };
+  // Delete the selected markup (+ all comments linked to it)
+  const deleteSelectedMarkup = async () => {
+    if (!selectedMarkupId) return;
+    await deleteMarkupAndComments(selectedMarkupId);
+  };
+
+  // Delete a markup by id plus ALL comments that reference it
   const deleteMarkupAndComments = async (markupId) => {
-    const proceed = window.confirm("Delete this markup and all comments linked to it?"); if (!proceed) return;
+    const proceed = window.confirm("Delete this markup and all comments linked to it?");
+    if (!proceed) return;
     const mref = doc(db, "projects", projectId, "folders", folderId, "images", imageId, "markups", markupId);
     try {
       const cRef = collection(db, "projects", projectId, "folders", folderId, "images", imageId, "comments");
       const qy = query(cRef, where("markupId", "==", markupId));
       const snap = await getDocs(qy);
-      await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+      const batchDeletes = snap.docs.map((d) => deleteDoc(d.ref));
+      await Promise.all(batchDeletes);
       await deleteDoc(mref);
       setLocalStrokes((prev) => prev.filter((s) => s.id !== markupId));
       if (selectedMarkupId === markupId) setSelectedMarkupId(null);
       setSelectedCommentId(null);
-    } catch (e) { alert(e.message || "Failed to delete markup"); }
+    } catch (e) {
+      alert(e.message || "Failed to delete markup");
+    }
   };
 
-  const onSelectMarkup = (mid) => { setSelectedMarkupId(mid || null); if (mid) scrollToFirstCommentFor(mid); };
+  // Selecting from dropdown should scroll
+  const onSelectMarkup = (mid) => {
+    setSelectedMarkupId(mid || null);
+    if (mid) scrollToFirstCommentFor(mid);
+  };
 
-  // icons + styles
+  /* ── Icons & styles ─────────────────────────────────────────── */
   const stroke = "#fff", sw = 1.6, none = "none";
   const IconToolbox = ({ open }) => (
     <svg width="22" height="22" viewBox="0 0 24 24">
@@ -995,13 +1050,43 @@ function ImageViewer() {
   );
 
   const barBG = "rgba(31,41,55,.72)";
-  const toolBoxWrap = { position: "absolute", left: 10, top: 10, zIndex: 12, display: "flex", flexDirection: "column", alignItems: "stretch" };
-  const toolBtn = (active=false) => ({ width: 38, height: 38, borderRadius: 10, background: active ? "rgba(16,185,129,.18)" : barBG, border: "1px solid rgba(255,255,255,.18)", display: "grid", placeItems: "center", cursor: "pointer", marginBottom: 6 });
-  const colorBtn = () => ({ ...toolBtn(false), background: barBG, position: "relative", overflow: "hidden" });
-  const colorDot = (current) => ({ width: 18, height: 18, borderRadius: "50%", background: current, border: "1.6px solid #fff" });
-  const toolHeader = { display: "grid", gridTemplateColumns: "auto 1fr", alignItems: "center", gap: 8, background: barBG, color: "#fff", border: "1px solid rgba(255,255,255,.18)", borderRadius: 12, padding: "6px 8px", cursor: "pointer", marginBottom: 6 };
-  const drawer = { background: "rgba(17,24,39,.86)", color: "#fff", border: "1px solid rgba(255,255,255,.18)", borderRadius: 12, padding: 8, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 };
-  const popout = (y) => ({ position: "absolute", left: 48, top: y, borderRadius: 10, padding: 8, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, zIndex: 13 });
+  const toolBoxWrap = {
+    position: "absolute", left: 10, top: 10, zIndex: 12,
+    display: "flex", flexDirection: "column", alignItems: "stretch"
+  };
+  const toolBtn = (active=false) => ({
+    width: 38, height: 38, borderRadius: 10,
+    background: active ? "rgba(16,185,129,.18)" : barBG,
+    border: "1px solid rgba(255,255,255,.18)",
+    display: "grid", placeItems: "center",
+    cursor: "pointer", marginBottom: 6
+  });
+  const colorBtn = () => ({
+    ...toolBtn(false),
+    background: barBG,
+    position: "relative",
+    overflow: "hidden",
+  });
+  const colorDot = (current) => ({
+    width: 18, height: 18, borderRadius: "50%",
+    background: current,
+    border: "1.6px solid #fff",
+  });
+  const toolHeader = {
+    display: "grid", gridTemplateColumns: "auto 1fr", alignItems: "center", gap: 8,
+    background: barBG, color: "#fff", border: "1px solid rgba(255,255,255,.18)",
+    borderRadius: 12, padding: "6px 8px", cursor: "pointer", marginBottom: 6
+  };
+  const drawer = {
+    background: "rgba(17,24,39,.86)", color: "#fff",
+    border: "1px solid rgba(255,255,255,.18)", borderRadius: 12,
+    padding: 8, display: "flex", flexDirection: "column", alignItems: "center", gap: 8
+  };
+  const popout = (y) => ({
+    position: "absolute", left: 48, top: y,
+    borderRadius: 10, padding: 8,
+    display: "flex", flexDirection: "column", alignItems: "center", gap: 6, zIndex: 13
+  });
 
   return (
     <div className="viewer">
@@ -1018,7 +1103,13 @@ function ImageViewer() {
           onWheel={onWheelZoom}
         >
           {/* TOOLBOX */}
-          <div className="toolbox-wrap" style={toolBoxWrap} onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+          <div
+            className="toolbox-wrap"
+            style={toolBoxWrap}
+            onPointerDown={(e) => e.stopPropagation()}
+            onPointerUp={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div style={toolHeader} onClick={() => setToolboxOpen((s) => !s)} title="Toggle tools (T)">
               <IconToolbox open={toolboxOpen} />
               <span style={{ fontSize: 12, color: "#e5e7eb" }}>Tools</span>
@@ -1026,11 +1117,18 @@ function ImageViewer() {
 
             {toolboxOpen && (
               <div style={drawer}>
-                <button style={toolBtn(mode === "select")} onClick={() => { setMode("select"); setActivePopout(null); }} title="Select (V)"><IconCrosshair/></button>
-                <button style={toolBtn(mode === "pan")} onClick={() => { setMode("pan"); setActivePopout(null); }} title="Hand (H)"><IconHand/></button>
+                <button style={toolBtn(mode === "select")} onClick={() => { setMode("select"); setActivePopout(null); }} title="Select (V)">
+                  <IconCrosshair/>
+                </button>
+
+                <button style={toolBtn(mode === "pan")} onClick={() => { setMode("pan"); setActivePopout(null); }} title="Hand (H)">
+                  <IconHand/>
+                </button>
 
                 <div style={{ position: "relative" }}>
-                  <button style={toolBtn(mode === "draw")} onClick={() => { setMode("draw"); setActivePopout(activePopout === "pencil" ? null : "pencil"); }} title="Pencil (B)"><IconPencil/></button>
+                  <button style={toolBtn(mode === "draw")} onClick={() => { setMode("draw"); setActivePopout(activePopout === "pencil" ? null : "pencil"); }} title="Pencil (B)">
+                    <IconPencil/>
+                  </button>
                   {activePopout === "pencil" && (
                     <div className="pop-card" style={popout(0)}>
                       <div className="pop-grid">
@@ -1047,7 +1145,9 @@ function ImageViewer() {
                 </div>
 
                 <div style={{ position: "relative" }}>
-                  <button style={toolBtn(false)} onClick={() => setActivePopout(activePopout === "zoom" ? null : "zoom")} title="Zoom"><IconZoom/></button>
+                  <button style={toolBtn(false)} onClick={() => setActivePopout(activePopout === "zoom" ? null : "zoom")} title="Zoom">
+                    <IconZoom/>
+                  </button>
                   {activePopout === "zoom" && (
                     <div className="pop-card" style={popout(0)}>
                       <div className="pop-grid">
@@ -1064,13 +1164,18 @@ function ImageViewer() {
                 </div>
 
                 <div style={{ position: "relative" }}>
-                  <button style={colorBtn()} onClick={() => setActivePopout(activePopout === "color" ? null : "color")} title="Color"><div style={colorDot(color)} /></button>
+                  <button style={colorBtn()} onClick={() => setActivePopout(activePopout === "color" ? null : "color")} title="Color">
+                    <div style={colorDot(color)} />
+                  </button>
                   {activePopout === "color" && (
                     <div className="pop-card" style={popout(0)}>
                       <span className="pop-title">Color</span>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 22px)", gap: 6 }}>
                         {["#ff2d55","#10b981","#0d8dea","#f59e0b","#ef4444","#a855f7","#111827","#ffffff"].map((c) => (
-                          <button key={c} onClick={() => setColor(c)} style={{ width:22,height:22,borderRadius:6,border:"1px solid rgba(255,255,255,.25)",background:c,cursor:"pointer",boxShadow: c===color ? "0 0 0 2px #10b981 inset" : "none" }} aria-label={`Color ${c}`}/>
+                          <button key={c} onClick={() => setColor(c)} style={{
+                            width:22,height:22,borderRadius:6,border:"1px solid rgba(255,255,255,.25)",
+                            background:c,cursor:"pointer",boxShadow: c===color ? "0 0 0 2px #10b981 inset" : "none"
+                          }} aria-label={`Color ${c}`}/>
                         ))}
                       </div>
                       <input type="color" value={color} onChange={(e)=>setColor(e.target.value)} style={{ width: 28, height: 28, marginTop: 6, border: "none", background: "transparent" }} aria-label="Custom color"/>
@@ -1078,21 +1183,48 @@ function ImageViewer() {
                   )}
                 </div>
 
-                <button style={{ ...toolBtn(false), background: "rgba(127,29,29,.65)" }} onClick={deleteSelectedMarkup} disabled={!selectedMarkupId} title="Delete selected markup + comments (Del)"><IconTrash/></button>
+                <button
+                  style={{ ...toolBtn(false), background: "rgba(127,29,29,.65)" }}
+                  onClick={deleteSelectedMarkup}
+                  disabled={!selectedMarkupId}
+                  title="Delete selected markup + comments (Del)"
+                >
+                  <IconTrash/>
+                </button>
               </div>
             )}
           </div>
 
           {imageDoc && (
-            <div style={{ position: "absolute", left: 0, top: 0, transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`, transformOrigin: "top left" }}>
-              <img ref={imgRef} src={imageDoc.url} alt={imageDoc.name} style={{ display: "block", width: imageDoc.width, height: imageDoc.height }} draggable={false}/>
-              <canvas ref={canvasRef} width={imageDoc.width} height={imageDoc.height} style={{ position: "absolute", left: 0, top: 0, width: imageDoc.width, height: imageDoc.height, pointerEvents: "none" }}/>
+            <div
+              style={{
+                position: "absolute",
+                left: 0, top: 0,
+                transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
+                transformOrigin: "top left",
+              }}
+            >
+              <img
+                ref={imgRef}
+                src={imageDoc.url}
+                alt={imageDoc.name}
+                style={{ display: "block", width: imageDoc.width, height: imageDoc.height }}
+                draggable={false}
+              />
+              <canvas
+                ref={canvasRef}
+                width={imageDoc.width}
+                height={imageDoc.height}
+                style={{ position: "absolute", left: 0, top: 0, width: imageDoc.width, height: imageDoc.height, pointerEvents: "none" }}
+              />
             </div>
           )}
         </div>
 
         <div className="card" style={{ borderRadius: 0 }}>
-          <div className="muted">{imageDoc ? `${imageDoc.name} — ${imageDoc.width}×${imageDoc.height}` : "Loading…"}</div>
+          <div className="muted">
+            {imageDoc ? `${imageDoc.name} — ${imageDoc.width}×${imageDoc.height}` : "Loading…"}
+          </div>
           <Link to="/" className="dropbox" style={{ marginLeft: 0, display: "inline-block", marginTop: 8 }}>← Home</Link>
         </div>
       </div>
@@ -1105,7 +1237,11 @@ function ImageViewer() {
             Enter = <b>add comment</b> • Shift+Enter = <b>newline</b>. Select a markup first.
           </div>
 
-          <select value={selectedMarkupId || ""} onChange={(e) => onSelectMarkup(e.target.value)} className="select">
+          <select
+            value={selectedMarkupId || ""}
+            onChange={(e) => onSelectMarkup(e.target.value)}
+            className="select"
+          >
             <option value="">Choose a markup…</option>
             {[...serverStrokes, ...localStrokes].map((m, idx) => (
               <option key={m.id} value={m.id}>#{idx + 1} — {m.color} — {m.size || 0}px</option>
@@ -1113,7 +1249,13 @@ function ImageViewer() {
           </select>
 
           {/* Comment text with DnD for reference image */}
-          <div className={`comment-dropwrap ${isCommentDrag ? "drag-in" : ""}`} onDragEnter={onCommentDragEnter} onDragOver={onCommentDragOver} onDragLeave={onCommentDragLeave} onDrop={onCommentDrop}>
+          <div
+            className={`comment-dropwrap ${isCommentDrag ? "drag-in" : ""}`}
+            onDragEnter={onCommentDragEnter}
+            onDragOver={onCommentDragOver}
+            onDragLeave={onCommentDragLeave}
+            onDrop={onCommentDrop}
+          >
             <textarea
               ref={commentBoxRef}
               rows={3}
@@ -1133,7 +1275,15 @@ function ImageViewer() {
           </div>
           <div className="drop-hint">Tip: drag an image into the box above to attach a reference.</div>
 
-          <input type="url" placeholder="Link (optional, e.g. https://example.com)" value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} className="input" style={{ marginTop: 6 }} aria-label="Optional link"/>
+          <input
+            type="url"
+            placeholder="Link (optional, e.g. https://example.com)"
+            value={linkUrl}
+            onChange={(e) => setLinkUrl(e.target.value)}
+            className="input"
+            style={{ marginTop: 6 }}
+            aria-label="Optional link"
+          />
           <input id="refPick" type="file" accept="image/*" onChange={onPickRef} style={{ display: "none" }} />
 
           {refFile && (
@@ -1168,7 +1318,7 @@ function ImageViewer() {
                   ref={(el) => { if (el) commentRefs.current[c.id] = el; else delete commentRefs.current[c.id]; }}
                   className={`comment ${isActive ? "active" : ""}`}
                   onClick={() => {
-                    if (isEditing) return;
+                    if (isEditing) return; // don't steal focus while editing
                     setSelectedCommentId(c.id);
                     setSelectedMarkupId(c.markupId);
                   }}
@@ -1177,14 +1327,28 @@ function ImageViewer() {
                     <div className="comment-link" style={{ flex: 1 }}>Linked to markup #{idx >= 0 ? idx + 1 : "?"}</div>
 
                     {!isEditing && (
-                      <button className="icon" title="Edit comment" onClick={(e) => { e.stopPropagation(); startEdit(c); }}>
+                      <button
+                        className="icon"
+                        title="Edit comment"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startEdit(c);
+                        }}
+                      >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M13 5l6 6-8 8H5v-6z"/><path d="M16 4l4 4"/>
                         </svg>
                       </button>
                     )}
 
-                    <button className="icon danger" title="Delete comment (optionally also delete its markup)" onClick={(e) => { e.stopPropagation(); deleteComment(c.id, c.markupId); }}>
+                    <button
+                      className="icon danger"
+                      title="Delete comment (optionally also delete its markup)"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteComment(c.id, c.markupId);
+                      }}
+                    >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                         <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
                       </svg>
@@ -1196,7 +1360,9 @@ function ImageViewer() {
                       {c.text && <div style={{ marginBottom: 6 }}>{renderWithLinks(c.text)}</div>}
                       {c.link && (
                         <div style={{ marginBottom: 6 }}>
-                          <a href={c.link} target="_blank" rel="noreferrer noopener" className="dropbox">{c.link}</a>
+                          <a href={c.link} target="_blank" rel="noreferrer noopener" className="dropbox">
+                            {c.link}
+                          </a>
                         </div>
                       )}
                       {c.refImageUrl && (
@@ -1212,7 +1378,12 @@ function ImageViewer() {
                         className="textarea"
                         value={editText}
                         onChange={(e) => setEditText(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEdit(); } }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            saveEdit();
+                          }
+                        }}
                         placeholder="Edit comment text… (Shift+Enter = newline)"
                         autoFocus
                       />
