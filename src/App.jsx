@@ -58,6 +58,8 @@ export default function App() {
 
   return (
     <HashRouter>
+      {/* Inject small CSS so you don't have to edit styles.css for the new popouts/sliders */}
+      <StyleInjector />
       <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
         <header className="topbar">
           <div className="brand">retouchRoom — Client Markups</div>
@@ -87,6 +89,58 @@ export default function App() {
         </div>
       </div>
     </HashRouter>
+  );
+}
+
+/* Tiny CSS injector for popouts + sliders (so you don’t have to touch styles.css) */
+function StyleInjector() {
+  return (
+    <style>{`
+      .pop-card {
+        background: rgba(17, 24, 39, 0.92);
+        border: 1px solid rgba(255,255,255,.14);
+        border-radius: 12px;
+        padding: 10px 12px;
+        color: #e5e7eb;
+        box-shadow: 0 10px 30px rgba(0,0,0,.35), 0 0 0 1px rgba(255,255,255,.04) inset;
+        backdrop-filter: blur(6px);
+        min-width: 120px;
+      }
+      .pop-title { font-size: 11px; letter-spacing:.02em; opacity:.9; margin-bottom:8px; }
+      .pop-value { font-size: 11px; opacity:.85; margin-top:6px; }
+
+      .vrange {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 160px; height: 28px;
+        transform: rotate(-90deg);
+        background: transparent;
+        outline: none;
+      }
+      .vrange::-webkit-slider-runnable-track {
+        height: 6px;
+        background: linear-gradient(90deg,#0ea5e9,#22d3ee);
+        border-radius: 999px;
+        box-shadow: 0 2px 10px rgba(0,0,0,.35) inset;
+      }
+      .vrange::-moz-range-track {
+        height: 6px;
+        background: linear-gradient(90deg,#0ea5e9,#22d3ee);
+        border-radius: 999px;
+      }
+      .vrange::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 16px; height: 16px; border-radius: 50%;
+        background: #3b82f6; border: 2px solid #e5f0ff;
+        margin-top: -5px;
+        box-shadow: 0 1px 4px rgba(0,0,0,.4);
+      }
+      .vrange::-moz-range-thumb {
+        width: 16px; height: 16px; border-radius: 50%;
+        background: #3b82f6; border: 2px solid #e5f0ff;
+        box-shadow: 0 1px 4px rgba(0,0,0,.4);
+      }
+    `}</style>
   );
 }
 
@@ -179,7 +233,6 @@ function Home() {
   const [images, setImages] = useState([]);
 
   // Upload UI + toast
- // (harmless comment to preserve structure)
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
@@ -459,7 +512,7 @@ function Home() {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Image Viewer with Stylized Toolbox & Popouts
+   Image Viewer with Stylized Toolbox & Popouts + Centered Zoom
 ──────────────────────────────────────────────────────────────── */
 function ImageViewer() {
   const { projectId, folderId, imageId } = useParams();
@@ -488,6 +541,7 @@ function ImageViewer() {
 
   const [commentText, setCommentText] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
+  the // keep structure (do not remove line content)
   const [refFile, setRefFile] = useState(null);
   const [refPreview, setRefPreview] = useState(null);
   const [selectedCommentId, setSelectedCommentId] = useState(null);
@@ -508,6 +562,44 @@ function ImageViewer() {
     setNotice({ msg, type });
     window.clearTimeout(showNotice.tid);
     showNotice.tid = window.setTimeout(() => setNotice(null), 2000);
+  };
+
+  // ---- Zoom helpers ----
+  const Z_MIN = 0.2, Z_MAX = 5;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  /** Keep the focal point (default = viewer center) fixed while zooming */
+  const zoomAt = (newZoom, focalPx) => {
+    const view = viewportRef.current;
+    if (!view) { setZoom(clamp(newZoom, Z_MIN, Z_MAX)); return; }
+
+    const rect = view.getBoundingClientRect();
+    const cx = focalPx?.x ?? rect.width / 2;
+    const cy = focalPx?.y ?? rect.height / 2;
+
+    const z0 = zoom;
+    const z1 = clamp(newZoom, Z_MIN, Z_MAX);
+
+    // Convert focal screen point to image coords at old zoom
+    const ix = (cx - offset.x) / z0;
+    const iy = (cy - offset.y) / z0;
+
+    // New offset so the same image coord stays under the focal point
+    const ox = cx - ix * z1;
+    const oy = cy - iy * z1;
+
+    setZoom(z1);
+    setOffset({ x: ox, y: oy });
+  };
+
+  /** Trackpad pinch (or Ctrl/⌘ + wheel) zooms around pointer */
+  const onWheelZoom = (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;   // only when pinching / ctrl-zooming
+    e.preventDefault();
+    const rect = viewportRef.current.getBoundingClientRect();
+    const target = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const factor = Math.exp(-e.deltaY * 0.0015); // smooth
+    zoomAt(zoom * factor, target);
   };
 
   // Load image
@@ -597,21 +689,23 @@ function ImageViewer() {
       }
     }
 
-    // Highlight selected markup
+    // Highlight selected markup — cyan outline behind the original stroke
     if (selectedMarkupId) {
       const allStrokes = [...serverStrokes, ...localStrokes];
       const sel = allStrokes.find((m) => m.id === selectedMarkupId);
-      if (sel) {
-        drawPath(sel.path, "rgba(16,185,129,0.45)", (sel.size || 6) + 6);
-        drawPath(sel.path, "#10b981", (sel.size || 6) + 2);
-        if (sel.bbox) {
-          ctx.save();
-          ctx.setLineDash([6, 4]);
-          ctx.lineWidth = 1.5;
-          ctx.strokeStyle = "#10b981";
-          ctx.strokeRect(sel.bbox.x, sel.bbox.y, sel.bbox.w, sel.bbox.h);
-          ctx.restore();
-        }
+      if (sel && sel.path && sel.path.length > 1) {
+        const outlineWidth = Math.max(2, (sel.size || 6) + 6);
+        ctx.save();
+        ctx.globalCompositeOperation = "destination-over"; // draw UNDER existing strokes
+        ctx.strokeStyle = "#06b6d4"; // cyan
+        ctx.lineWidth = outlineWidth;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(sel.path[0].x, sel.path[0].y);
+        for (let i = 1; i < sel.path.length; i++) ctx.lineTo(sel.path[i].x, sel.path[i].y);
+        ctx.stroke();
+        ctx.restore();
       }
     }
 
@@ -909,11 +1003,10 @@ function ImageViewer() {
     padding: 8, display: "flex", flexDirection: "column", alignItems: "center", gap: 8
   };
   const popout = (y) => ({
-    position: "absolute", left: 48, top: y, background: "rgba(17,24,39,.9)",
-    border: "1px solid rgba(255,255,255,.18)", borderRadius: 10, padding: 8,
-    boxShadow: "0 10px 24px rgba(0,0,0,.25)", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, zIndex: 13
+    position: "absolute", left: 48, top: y,
+    borderRadius: 10, padding: 8,
+    display: "flex", flexDirection: "column", alignItems: "center", gap: 6, zIndex: 13
   });
-  const verticalSlider = { transform: "rotate(-90deg)", width: 140, height: 24 };
 
   return (
     <div className="viewer">
@@ -927,6 +1020,7 @@ function ImageViewer() {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onClick={onCanvasClick}
+          onWheel={onWheelZoom}
         >
           {/* TOOLBOX */}
           <div
@@ -956,10 +1050,12 @@ function ImageViewer() {
                     <IconPencil/>
                   </button>
                   {activePopout === "pencil" && (
-                    <div style={popout(0)}>
-                      <span style={{ fontSize: 11, color: "#e5e7eb" }}>Pencil</span>
-                      <input type="range" min="1" max="32" value={brush} onChange={(e) => setBrush(Number(e.target.value))} style={verticalSlider}/>
-                      <div style={{ fontSize: 11, color: "#e5e7eb" }}>{brush}px</div>
+                    <div className="pop-card" style={popout(0)}>
+                      <span className="pop-title">Pencil</span>
+                      <input type="range" min="1" max="32" value={brush}
+                             onChange={(e) => setBrush(Number(e.target.value))}
+                             className="vrange" />
+                      <div className="pop-value">{brush}px</div>
                     </div>
                   )}
                 </div>
@@ -969,10 +1065,12 @@ function ImageViewer() {
                     <IconZoom/>
                   </button>
                   {activePopout === "zoom" && (
-                    <div style={popout(0)}>
-                      <span style={{ fontSize: 11, color: "#e5e7eb" }}>Zoom</span>
-                      <input type="range" min="0.5" max="5" step="0.1" value={zoom} onChange={(e) => setZoom(Number(e.target.value))} style={verticalSlider}/>
-                      <div style={{ fontSize: 11, color: "#e5e7eb" }}>{Math.round(zoom*100)}%</div>
+                    <div className="pop-card" style={popout(0)}>
+                      <span className="pop-title">Zoom</span>
+                      <input type="range" min="0.2" max="5" step="0.05" value={zoom}
+                             onChange={(e) => zoomAt(Number(e.target.value))}
+                             className="vrange" />
+                      <div className="pop-value">{Math.round(zoom*100)}%</div>
                     </div>
                   )}
                 </div>
@@ -982,8 +1080,8 @@ function ImageViewer() {
                     <div style={colorDot(color)} />
                   </button>
                   {activePopout === "color" && (
-                    <div style={popout(0)}>
-                      <span style={{ fontSize: 11, color: "#e5e7eb" }}>Color</span>
+                    <div className="pop-card" style={popout(0)}>
+                      <span className="pop-title">Color</span>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 22px)", gap: 6 }}>
                         {["#ff2d55","#10b981","#0d8dea","#f59e0b","#ef4444","#a855f7","#111827","#ffffff"].map((c) => (
                           <button key={c} onClick={() => setColor(c)} style={{
