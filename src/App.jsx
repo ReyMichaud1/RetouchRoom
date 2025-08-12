@@ -59,7 +59,7 @@ function Home() {
   // Projects
   const [projects, setProjects] = useState([]);
   const [projectName, setProjectName] = useState("");
-  const [dropboxLink, setDropboxLink] = useState("");
+  the const [dropboxLink, setDropboxLink] = useState("");
   const [activeProjectId, setActiveProjectId] = useState(null);
 
   // Folders
@@ -386,6 +386,7 @@ function ImageViewer() {
   const [selectedCommentId, setSelectedCommentId] = useState(null);
 
   const commentRefs = useRef({}); // id -> element
+  const commentBoxRef = useRef(null);
   const didFit = useRef(false);
   const panStart = useRef({ x: 0, y: 0 });
   const offsetStart = useRef({ x: 0, y: 0 });
@@ -393,6 +394,14 @@ function ImageViewer() {
   // Toolbox open/close + active popout
   const [toolboxOpen, setToolboxOpen] = useState(true);
   const [activePopout, setActivePopout] = useState(null); // "zoom" | "pencil" | "color" | null
+
+  // Local toast in viewer
+  const [notice, setNotice] = useState(null);
+  const showNotice = (msg, type = "ok") => {
+    setNotice({ msg, type });
+    window.clearTimeout(showNotice.tid);
+    showNotice.tid = window.setTimeout(() => setNotice(null), 2000);
+  };
 
   // Load image
   useEffect(() => {
@@ -593,7 +602,7 @@ function ImageViewer() {
     }
   };
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts (global)
   useEffect(() => {
     const onKey = async (e) => {
       const tag = (e.target?.tagName || "").toLowerCase();
@@ -644,7 +653,8 @@ function ImageViewer() {
 
   const addComment = async () => {
     const text = commentText.trim();
-    if (!text && !linkUrl && !refFile) return;
+    const hasContent = !!(text || linkUrl.trim() || refFile);
+    if (!hasContent) return;
     if (!selectedMarkupId) { alert("Select or draw a markup first."); return; }
 
     let refImageUrl = null, refImageId = null;
@@ -656,7 +666,7 @@ function ImageViewer() {
       const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, { method: "POST", body: fd });
       const data = await res.json();
       if (res.ok) { refImageUrl = data.secure_url; refImageId = data.public_id; }
-      else alert(data.error?.message || "Reference image upload failed");
+      else { alert(data.error?.message || "Reference image upload failed"); return; }
     }
 
     await addDoc(
@@ -665,6 +675,9 @@ function ImageViewer() {
     );
 
     setCommentText(""); setLinkUrl(""); clearRef();
+    showNotice("Comment added ✅", "ok");
+    // re-focus the textarea for fast entry
+    commentBoxRef.current?.focus();
   };
 
   // Delete comment (optionally also delete its markup + all comments)
@@ -936,7 +949,7 @@ function ImageViewer() {
         <div className="card" style={{ borderRadius: 0 }}>
           <h2 style={{ marginBottom: 8 }}>Comments</h2>
           <div className="muted" style={{ marginBottom: 8 }}>
-            Click a markup (crosshair tool) or pick it from the list. Deleting a comment will ask if you also want to delete its markup + all linked comments.
+            Enter = <b>add comment</b> • Shift+Enter = <b>newline</b>. Select a markup first.
           </div>
 
           <select
@@ -951,11 +964,21 @@ function ImageViewer() {
           </select>
 
           <textarea
+            ref={commentBoxRef}
             rows={3}
-            placeholder="Write a comment… (URLs in here will auto-link)"
+            placeholder="Write a comment… (URLs auto-link)"
             value={commentText}
             onChange={(e) => setCommentText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                // only try if the button would be enabled
+                const canAdd = !!selectedMarkupId && !!(commentText.trim() || linkUrl.trim() || refFile);
+                if (canAdd) addComment();
+              }
+            }}
             className="textarea"
+            aria-label="Comment text"
           />
 
           <input
@@ -965,6 +988,7 @@ function ImageViewer() {
             onChange={(e) => setLinkUrl(e.target.value)}
             className="input"
             style={{ marginTop: 6 }}
+            aria-label="Optional link"
           />
 
           <div className="ref-row">
@@ -984,7 +1008,11 @@ function ImageViewer() {
           )}
 
           <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-            <button onClick={addComment} disabled={!selectedMarkupId || (!commentText.trim() && !linkUrl && !refFile)}>
+            <button
+              onClick={addComment}
+              disabled={!selectedMarkupId || (!commentText.trim() && !linkUrl && !refFile)}
+              title="Enter = add • Shift+Enter = newline"
+            >
               Add Comment
             </button>
             <button onClick={() => { setCommentText(""); setLinkUrl(""); clearRef(); }}>
@@ -1038,6 +1066,13 @@ function ImageViewer() {
           <Link to="/" className="dropbox">← Back to Home</Link>
         </div>
       </aside>
+
+      {/* Tiny toast */}
+      {notice && (
+        <div className={`toast ${notice.type}`} role="status" aria-live="polite" style={{ position: "fixed", right: 16, bottom: 16 }}>
+          {notice.msg}
+        </div>
+      )}
     </div>
   );
 }
@@ -1058,6 +1093,7 @@ function Help() {
           <li><b>Open Markup</b> — click <b>Open Markup</b> to annotate.</li>
           <li><b>Toolbox</b> — click the toolbox icon (or press <b>T</b>) to open/close tools. Pop-outs: Pencil size, Zoom, and Color.</li>
           <li><b>Delete</b> — trash in the bar deletes the selected markup (with all its comments). Deleting a comment will ask if you also want to delete its linked markup.</li>
+          <li><b>Comments</b> — Enter adds a comment; Shift+Enter inserts a newline. Select a markup first.</li>
         </ol>
         <Link to="/" className="dropbox">← Back to Home</Link>
       </section>
