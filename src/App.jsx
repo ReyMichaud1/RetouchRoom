@@ -23,20 +23,34 @@ import {
   getDoc,
   getDocs,
   where,
+  updateDoc,
 } from "firebase/firestore";
-import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
-} from "firebase/auth";
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 
-/** Cloudinary (unsigned) */
+/* ────────────────────────────────────────────────────────────────
+   Cloudinary (unsigned)
+──────────────────────────────────────────────────────────────── */
 const CLOUD_NAME = "dwcgdkoxd";
 const UPLOAD_PRESET = "retouch-markup";
 const CLOUD_ROOT = "retouch";
 
-/** Helpers */
+/* ────────────────────────────────────────────────────────────────
+   Shared-Login via env (change in Vercel → Environment Variables)
+   VITE_SHARED_USERNAME="Markup,ClientA"  (comma list allowed)
+   VITE_SHARED_DOMAIN="retouch.local"
+──────────────────────────────────────────────────────────────── */
+const SHARED_DOMAIN =
+  import.meta.env.VITE_SHARED_DOMAIN && String(import.meta.env.VITE_SHARED_DOMAIN).trim()
+    ? String(import.meta.env.VITE_SHARED_DOMAIN).trim()
+    : "retouch.local";
+const SHARED_USERNAMES = (import.meta.env.VITE_SHARED_USERNAME || "Markup")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+/* ────────────────────────────────────────────────────────────────
+   Helpers
+──────────────────────────────────────────────────────────────── */
 const isoDate = (d = new Date()) => d.toISOString().slice(0, 10);
 
 /* ────────────────────────────────────────────────────────────────
@@ -74,7 +88,7 @@ export default function App() {
       <StyleInjector />
       <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
         <header className="topbar">
-          <div className="brand">retouchRoom — Client Markups</div>
+          <div className="brand">Retouch Room - Markups</div>
           <nav className="nav">
             {user ? (
               <>
@@ -94,9 +108,30 @@ export default function App() {
         <div style={{ flex: 1, minHeight: 0 }}>
           <Routes>
             <Route path="/login" element={<Login />} />
-            <Route path="/" element={<RequireAuth><Home /></RequireAuth>} />
-            <Route path="/view/:projectId/:folderId/:imageId" element={<RequireAuth><ImageViewer /></RequireAuth>} />
-            <Route path="/help" element={<RequireAuth><Help /></RequireAuth>} />
+            <Route
+              path="/"
+              element={
+                <RequireAuth>
+                  <Home />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/view/:projectId/:folderId/:imageId"
+              element={
+                <RequireAuth>
+                  <ImageViewer />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/help"
+              element={
+                <RequireAuth>
+                  <Help />
+                </RequireAuth>
+              }
+            />
           </Routes>
         </div>
       </div>
@@ -104,7 +139,9 @@ export default function App() {
   );
 }
 
-/* Tiny CSS injector for popouts + sliders + comment DnD */
+/* ────────────────────────────────────────────────────────────────
+   Tiny CSS injector (sliders/popouts/comment DnD)
+──────────────────────────────────────────────────────────────── */
 function StyleInjector() {
   return (
     <style>{`
@@ -143,15 +180,12 @@ function StyleInjector() {
       .pop-title { font-size: 12px; font-weight: 600; opacity: .9; }
       .pop-value { font-size: 12px; opacity: .85; }
 
-      /* Drag an image into the comment box */
       .comment-dropwrap { position: relative; }
       .comment-dropwrap.drag-in textarea {
         border: 2px dashed #06b6d4 !important;
         background: rgba(6,182,212,0.06);
       }
-      .drop-hint {
-        font-size: 12px; color: #6b7280; margin: 6px 2px 0;
-      }
+      .drop-hint { font-size: 12px; color: #6b7280; margin: 6px 2px 0; }
       .chip {
         display:inline-flex; align-items:center; gap:6px;
         padding:4px 8px; border-radius:999px; background:#0f172a; color:#e5e7eb;
@@ -163,51 +197,73 @@ function StyleInjector() {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Login (Email/Password)
+   Login (Username → email mapping via env)
 ──────────────────────────────────────────────────────────────── */
 function Login() {
   const nav = useNavigate();
   const location = useLocation();
   const from = location.state?.from?.pathname || "/";
 
-  const [mode, setMode] = useState("signin");
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [pw, setPw] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
+  const toEmail = (u) => {
+    const trimmed = (u || "").trim();
+    if (trimmed.includes("@")) return trimmed; // allow direct email if desired
+    const uname = trimmed.toLowerCase();
+    const match = SHARED_USERNAMES.find((n) => n.toLowerCase() === uname);
+    const finalName = match || uname;
+    return `${finalName}@${SHARED_DOMAIN}`;
+  };
+
   const onSubmit = async (e) => {
     e.preventDefault();
-    setErr(""); setBusy(true);
+    setErr("");
+    setBusy(true);
     try {
-      if (mode === "signin") {
-        await signInWithEmailAndPassword(auth, email.trim(), pw);
-      } else {
-        await createUserWithEmailAndPassword(auth, email.trim(), pw);
-      }
+      await signInWithEmailAndPassword(auth, toEmail(username), pw);
       nav(from, { replace: true });
     } catch (e) {
-      setErr(e.message || "Authentication failed");
-    } finally { setBusy(false); }
+      const code = e?.code || "";
+      if (code.includes("operation-not-allowed")) setErr("Email/Password is not enabled in Firebase.");
+      else if (code.includes("user-not-found") || code.includes("wrong-password")) setErr("Invalid username or password.");
+      else if (code.includes("too-many-requests")) setErr("Too many attempts—try again later.");
+      else setErr(e.message || "Sign in failed");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <main className="wrap" style={{ height: "100%", display: "grid", placeItems: "center" }}>
       <form className="card" onSubmit={onSubmit} style={{ minWidth: 340, maxWidth: 420 }}>
-        <h2 style={{ marginBottom: 12 }}>{mode === "signin" ? "Sign in" : "Create account"}</h2>
-        <input type="email" placeholder="Email" value={email} autoComplete="email"
-               onChange={(e) => setEmail(e.target.value)} required />
-        <input type="password" placeholder="Password (min 6 chars)" value={pw}
-               autoComplete={mode === "signin" ? "current-password" : "new-password"}
-               onChange={(e) => setPw(e.target.value)} minLength={6} required style={{ marginTop: 8 }} />
+        <h2 style={{ marginBottom: 12 }}>Sign in</h2>
+        <input
+          type="text"
+          placeholder="Username (e.g., Markup)"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          required
+          autoFocus
+        />
+        <input
+          type="password"
+          placeholder="Password"
+          value={pw}
+          onChange={(e) => setPw(e.target.value)}
+          minLength={6}
+          required
+          style={{ marginTop: 8 }}
+          autoComplete="current-password"
+        />
         {err && <div className="muted" style={{ color: "#ef4444", marginTop: 8 }}>{err}</div>}
         <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-          <button type="submit" disabled={busy}>
-            {busy ? (mode === "signin" ? "Signing in…" : "Creating…") : (mode === "signin" ? "Sign in" : "Create account")}
-          </button>
-          <button type="button" onClick={() => setMode(mode === "signin" ? "signup" : "signin")} disabled={busy}>
-            {mode === "signin" ? "Need an account?" : "Have an account?"}
-          </button>
+          <button type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+        </div>
+        <div className="muted" style={{ marginTop: 10 }}>
+          Use the shared credentials you were given.
         </div>
       </form>
     </main>
@@ -252,7 +308,9 @@ function Home() {
 
   useEffect(() => {
     if (!activeProjectId) {
-      setFolders([]); setActiveFolderId(null); return;
+      setFolders([]);
+      setActiveFolderId(null);
+      return;
     }
     const qy = query(collection(db, "projects", activeProjectId, "folders"), orderBy("createdAt", "desc"));
     const stop = onSnapshot(qy, (snap) => {
@@ -264,19 +322,29 @@ function Home() {
   }, [activeProjectId, activeFolderId]);
 
   useEffect(() => {
-    if (!activeProjectId || !activeFolderId) { setImages([]); return; }
-    const qy = query(collection(db, "projects", activeProjectId, "folders", activeFolderId, "images"),
-                     orderBy("uploadedAt", "desc"));
+    if (!activeProjectId || !activeFolderId) {
+      setImages([]);
+      return;
+    }
+    const qy = query(
+      collection(db, "projects", activeProjectId, "folders", activeFolderId, "images"),
+      orderBy("uploadedAt", "desc")
+    );
     const stop = onSnapshot(qy, (snap) => setImages(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
     return () => stop();
   }, [activeProjectId, activeFolderId]);
 
   const createProject = async () => {
-    const name = projectName.trim(); if (!name) return;
+    const name = projectName.trim();
+    if (!name) return;
     const ref = await addDoc(collection(db, "projects"), {
-      name, dropbox: dropboxLink.trim() || null, createdAt: serverTimestamp(),
+      name,
+      dropbox: dropboxLink.trim() || null,
+      createdAt: serverTimestamp(),
     });
-    setProjectName(""); setDropboxLink(""); setActiveProjectId(ref.id);
+    setProjectName("");
+    setDropboxLink("");
+    setActiveProjectId(ref.id);
   };
 
   const deleteProject = async (id) => {
@@ -286,20 +354,27 @@ function Home() {
 
   const createFolder = async () => {
     if (!activeProjectId) return alert("Open a project first.");
-    const name = (folderName || isoDate()).trim(); if (!name) return;
+    const name = (folderName || isoDate()).trim();
+    if (!name) return;
     try {
       setCreatingFolder(true);
       const ref = await addDoc(collection(db, "projects", activeProjectId, "folders"), {
-        name, createdAt: serverTimestamp(),
+        name,
+        createdAt: serverTimestamp(),
       });
-      setActiveFolderId(ref.id); setFolderName(isoDate());
-    } catch (e) { alert(e.message || "Failed to create folder."); }
-    finally { setCreatingFolder(false); }
+      setActiveFolderId(ref.id);
+      setFolderName(isoDate());
+    } catch (e) {
+      alert(e.message || "Failed to create folder.");
+    } finally {
+      setCreatingFolder(false);
+    }
   };
 
   const handleUpload = async (fileList) => {
     if (!activeProjectId || !activeFolderId) return alert("Select a project and folder first.");
-    const files = Array.from(fileList || []); if (!files.length) return;
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
 
     const folderObj = folders.find((f) => f.id === activeFolderId);
     const folderLabel = folderObj?.name || "unnamed";
@@ -312,16 +387,31 @@ function Home() {
         fd.append("upload_preset", UPLOAD_PRESET);
         fd.append("folder", `${CLOUD_ROOT}/${activeProjectId}/${folderLabel}`);
 
-        const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, { method: "POST", body: fd });
+        const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
+          method: "POST",
+          body: fd,
+        });
         const data = await res.json();
-        if (!res.ok) { showNotice(data.error?.message || "Cloudinary upload failed", "err"); continue; }
+        if (!res.ok) {
+          showNotice(data.error?.message || "Cloudinary upload failed", "err");
+          continue;
+        }
         await addDoc(collection(db, "projects", activeProjectId, "folders", activeFolderId, "images"), {
-          url: data.secure_url, publicId: data.public_id, format: data.format, bytes: data.bytes,
-          width: data.width, height: data.height, name: file.name, uploadedAt: serverTimestamp(),
+          url: data.secure_url,
+          publicId: data.public_id,
+          format: data.format,
+          bytes: data.bytes,
+          width: data.width,
+          height: data.height,
+          name: file.name,
+          uploadedAt: serverTimestamp(),
         });
       }
-      const n = files.length; showNotice(`Uploaded ${n} file${n > 1 ? "s" : ""} ✅`, "ok");
-    } finally { setIsUploading(false); }
+      const n = files.length;
+      showNotice(`Uploaded ${n} file${n > 1 ? "s" : ""} ✅`, "ok");
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const onDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); };
@@ -351,7 +441,11 @@ function Home() {
               projects.map((p) => (
                 <div key={p.id} className="project">
                   <div className="project-name">{p.name}</div>
-                  {p.dropbox && <a href={p.dropbox} target="_blank" rel="noreferrer" className="dropbox">Dropbox link</a>}
+                  {p.dropbox && (
+                    <a href={p.dropbox} target="_blank" rel="noreferrer" className="dropbox">
+                      Dropbox link
+                    </a>
+                  )}
                   <div className="spacer" />
                   <button onClick={() => setActiveProjectId(p.id)}>{activeProjectId === p.id ? "Active" : "Open"}</button>
                   <button className="danger" onClick={() => deleteProject(p.id)}>Delete</button>
@@ -393,17 +487,27 @@ function Home() {
 
       {activeProject && activeFolder && (
         <>
-          <section className="card"><h2>Images — {activeProject.name} / {activeFolder.name}</h2></section>
+          <section className="card">
+            <h2>Images — {activeProject.name} / {activeFolder.name}</h2>
+          </section>
 
           <section className="card">
             <h2>Upload Images</h2>
-            <div className={`dropzone ${isDragging ? "is-dragging" : ""} ${isUploading ? "is-uploading" : ""}`}
-                 onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+            <div
+              className={`dropzone ${isDragging ? "is-dragging" : ""} ${isUploading ? "is-uploading" : ""}`}
+              onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
+            >
               <p><strong>Drag & drop</strong> images here</p>
               <p className="muted">or</p>
               <button onClick={() => fileInputRef.current?.click()} disabled={isUploading}>Browse files</button>
-              <input ref={fileInputRef} type="file" multiple accept="image/png,image/jpeg,image/webp" style={{ display: "none" }}
-                     onChange={(e) => handleUpload(e.target.files)} />
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/png,image/jpeg,image/webp"
+                style={{ display: "none" }}
+                onChange={(e) => handleUpload(e.target.files)}
+              />
               <small className="muted" style={{ display: "block", marginTop: 8 }}>
                 Cloudinary path: <code>{CLOUD_ROOT}/{activeProjectId}/{activeFolder?.name}</code>
               </small>
@@ -439,13 +543,17 @@ function Home() {
         </>
       )}
 
-      {notice && <div className={`toast ${notice.type}`} role="status" aria-live="polite">{notice.msg}</div>}
+      {notice && (
+        <div className={`toast ${notice.type}`} role="status" aria-live="polite">
+          {notice.msg}
+        </div>
+      )}
     </main>
   );
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Image Viewer (centered zoom, cyan outline, comment DnD)
+   Image Viewer (centered zoom, cyan outline, Enter=add, DnD ref, edit comments)
 ──────────────────────────────────────────────────────────────── */
 function ImageViewer() {
   const { projectId, folderId, imageId } = useParams();
@@ -480,6 +588,11 @@ function ImageViewer() {
 
   const [isCommentDrag, setIsCommentDrag] = useState(false);
 
+  // edit state
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState("");
+  const [editLink, setEditLink] = useState("");
+
   const commentRefs = useRef({});
   const commentBoxRef = useRef(null);
   const didFit = useRef(false);
@@ -496,7 +609,7 @@ function ImageViewer() {
     showNotice.tid = window.setTimeout(() => setNotice(null), 2000);
   };
 
-  // ---- Zoom helpers ----
+  // Zoom helpers
   const Z_MIN = 0.2, Z_MAX = 5;
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const zoomAt = (newZoom, focalPx) => {
@@ -551,8 +664,10 @@ function ImageViewer() {
 
   // Server strokes
   useEffect(() => {
-    const qy = query(collection(db, "projects", projectId, "folders", folderId, "images", imageId, "markups"),
-                     orderBy("createdAt", "asc"));
+    const qy = query(
+      collection(db, "projects", projectId, "folders", folderId, "images", imageId, "markups"),
+      orderBy("createdAt", "asc")
+    );
     const stop = onSnapshot(qy, (snap) => {
       const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setServerStrokes(list);
@@ -563,8 +678,10 @@ function ImageViewer() {
 
   // Comments live
   useEffect(() => {
-    const qy = query(collection(db, "projects", projectId, "folders", folderId, "images", imageId, "comments"),
-                     orderBy("createdAt", "asc"));
+    const qy = query(
+      collection(db, "projects", projectId, "folders", folderId, "images", imageId, "comments"),
+      orderBy("createdAt", "asc")
+    );
     const stop = onSnapshot(qy, (snap) => setComments(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
     return () => stop();
   }, [projectId, folderId, imageId]);
@@ -642,11 +759,14 @@ function ImageViewer() {
     el.setPointerCapture?.(e.pointerId);
 
     if (mode === "pan") {
-      e.preventDefault(); setPanning(true);
+      e.preventDefault();
+      setPanning(true);
       panStart.current = { x: e.clientX, y: e.clientY };
       offsetStart.current = { ...offset };
     } else if (mode === "draw") {
-      e.preventDefault(); setDrawing(true); setCurrentPath([toImage(e)]);
+      e.preventDefault();
+      setDrawing(true);
+      setCurrentPath([toImage(e)]);
     }
   };
   const onPointerMove = (e) => {
@@ -677,14 +797,16 @@ function ImageViewer() {
 
     setLocalStrokes((prev) => [...prev, stroke]);
     setSelectedMarkupId(newRef.id);
-    setDrawing(false); setCurrentPath([]);
+    setDrawing(false);
+    setCurrentPath([]);
 
     await setDoc(newRef, { color, size: brush, path: finalPath, bbox, createdAt: serverTimestamp() });
   };
 
   const scrollToFirstCommentFor = (mid) => {
     if (!mid || comments.length === 0) return;
-    const target = comments.find((c) => c.markupId === mid); if (!target) return;
+    const target = comments.find((c) => c.markupId === mid);
+    if (!target) return;
     const el = commentRefs.current[target.id];
     if (el?.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
     setSelectedCommentId(target.id);
@@ -720,7 +842,7 @@ function ImageViewer() {
 
       if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedCommentId) {
-          const linked = comments.find(c => c.id === selectedCommentId)?.markupId || null;
+          const linked = comments.find((c) => c.id === selectedCommentId)?.markupId || null;
           await deleteComment(selectedCommentId, linked);
         } else if (selectedMarkupId) {
           await deleteSelectedMarkup();
@@ -731,34 +853,50 @@ function ImageViewer() {
     return () => window.removeEventListener("keydown", onKey);
   }, [selectedMarkupId, selectedCommentId, comments]);
 
-  // Reference image handling (button removed; now via DnD or file picker shortcut)
+  // Comment edit helpers
+  const startEdit = (c) => {
+    setEditingId(c.id);
+    setEditText(c.text || "");
+    setEditLink(c.link || "");
+    setSelectedCommentId(c.id);
+    setSelectedMarkupId(c.markupId);
+  };
+  const cancelEdit = () => { setEditingId(null); setEditText(""); setEditLink(""); };
+  const saveEdit = async () => {
+    if (!editingId) return;
+    try {
+      const cref = doc(db, "projects", projectId, "folders", folderId, "images", imageId, "comments", editingId);
+      await updateDoc(cref, { text: editText.trim() || null, link: editLink.trim() || null, updatedAt: serverTimestamp() });
+      cancelEdit();
+      showNotice("Comment updated ✅", "ok");
+    } catch (e) { alert(e.message || "Failed to update"); }
+  };
+
+  // Reference image via DnD (no visible button)
   const onPickRef = (e) => {
     const f = e.target.files?.[0];
     if (!f) { setRefFile(null); setRefPreview(null); return; }
-    setRefFile(f); setRefPreview(URL.createObjectURL(f));
+    setRefFile(f);
+    setRefPreview(URL.createObjectURL(f));
   };
   const clearRef = () => { setRefFile(null); if (refPreview) URL.revokeObjectURL(refPreview); setRefPreview(null); };
 
   // Drag-and-drop onto the comment box
-  const onCommentDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); setIsCommentDrag(true); };
-  const onCommentDragOver  = (e) => { e.preventDefault(); e.stopPropagation(); };
-  const onCommentDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) setIsCommentDrag(false); };
-  const onCommentDrop      = (e) => {
-    e.preventDefault(); e.stopPropagation(); setIsCommentDrag(false);
-    const f = e.dataTransfer?.files?.[0];
-    if (!f) return;
+  const [isCommentDragOver, setIsCommentDragOver] = useState(false);
+  const onCommentDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); setIsCommentDrag(true); setIsCommentDragOver(true); };
+  const onCommentDragOver = (e) => { e.preventDefault(); e.stopPropagation(); };
+  const onCommentDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) { setIsCommentDrag(false); setIsCommentDragOver(false); } };
+  const onCommentDrop = (e) => {
+    e.preventDefault(); e.stopPropagation(); setIsCommentDrag(false); setIsCommentDragOver(false);
+    const f = e.dataTransfer?.files?.[0]; if (!f) return;
     if (!f.type.startsWith("image/")) { showNotice("Please drop an image file.", "err"); return; }
-    clearRef();
-    setRefFile(f);
-    setRefPreview(URL.createObjectURL(f));
-    showNotice("Reference image attached ✅", "ok");
+    clearRef(); setRefFile(f); setRefPreview(URL.createObjectURL(f)); showNotice("Reference image attached ✅", "ok");
   };
 
   const renderWithLinks = (text) => {
     const parts = []; const regex = /https?:\/\/\S+/gi; let last = 0; let m;
     while ((m = regex.exec(text))) {
-      const url = m[0];
-      if (m.index > last) parts.push(text.slice(last, m.index));
+      const url = m[0]; if (m.index > last) parts.push(text.slice(last, m.index));
       parts.push(<a key={m.index} href={url} target="_blank" rel="noreferrer noopener" className="dropbox">{url}</a>);
       last = m.index + url.length;
     }
@@ -783,16 +921,16 @@ function ImageViewer() {
       else { alert(data.error?.message || "Reference image upload failed"); return; }
     }
 
-    await addDoc(collection(db, "projects", projectId, "folders", folderId, "images", imageId, "comments"),
-      { markupId: selectedMarkupId, text: text || null, link: linkUrl.trim() || null, refImageUrl, refImageId, createdAt: serverTimestamp() });
+    await addDoc(collection(db, "projects", projectId, "folders", folderId, "images", imageId, "comments"), {
+      markupId: selectedMarkupId, text: text || null, link: linkUrl.trim() || null, refImageUrl, refImageId, createdAt: serverTimestamp(),
+    });
 
     setCommentText(""); setLinkUrl(""); clearRef(); showNotice("Comment added ✅", "ok"); commentBoxRef.current?.focus();
   };
 
   const deleteComment = async (cid, linkedMarkupId) => {
     const confirm1 = window.confirm("Delete this comment?"); if (!confirm1) return;
-    let also = false;
-    if (linkedMarkupId) also = window.confirm("Also delete its linked markup AND all comments linked to that markup?");
+    let also = false; if (linkedMarkupId) also = window.confirm("Also delete its linked markup AND all comments linked to that markup?");
     try {
       if (also) { await deleteMarkupAndComments(linkedMarkupId); }
       else {
@@ -803,7 +941,6 @@ function ImageViewer() {
   };
 
   const deleteSelectedMarkup = async () => { if (!selectedMarkupId) return; await deleteMarkupAndComments(selectedMarkupId); };
-
   const deleteMarkupAndComments = async (markupId) => {
     const proceed = window.confirm("Delete this markup and all comments linked to it?"); if (!proceed) return;
     const mref = doc(db, "projects", projectId, "folders", folderId, "images", imageId, "markups", markupId);
@@ -821,24 +958,41 @@ function ImageViewer() {
 
   const onSelectMarkup = (mid) => { setSelectedMarkupId(mid || null); if (mid) scrollToFirstCommentFor(mid); };
 
-  /* icons + styles */
+  // icons + styles
   const stroke = "#fff", sw = 1.6, none = "none";
-  const IconToolbox = ({ open }) => (<svg width="22" height="22" viewBox="0 0 24 24">
-    <rect x="3" y={open ? 9 : 10} width="18" height="10" rx="2" fill="rgba(255,255,255,0.04)" stroke={stroke} strokeWidth={sw}/>
-    <rect x="4" y={open ? 6 : 8.5} width="16" height="2" rx="1" fill="rgba(255,255,255,0.08)" stroke={stroke} strokeWidth={sw}/>
-    <rect x="9" y={open ? 6.5 : 8} width="6" height="2" rx="1" fill={stroke}/>
-  </svg>);
-  const IconCrosshair = () => (<svg width="22" height="22" viewBox="0 0 24 24" fill={none} stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>);
-  const IconHand = () => (<svg width="22" height="22" viewBox="0 0 24 24" fill={none} stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">
-    <path d="M7 11v-3a1.5 1.5 0 013 0v3"/><path d="M10 10V6a1.5 1.5 0 013 0v4"/>
-    <path d="M13 10V5a1.5 1.5 0 013 0v5"/><path d="M16 11v-2a1.5 1.5 0 013 0v4a5 5 0 01-5 5h-1a5 5 0 01-5-5v-2"/></svg>);
-  const IconPencil = () => (<svg width="22" height="22" viewBox="0 0 24 24" fill={none} stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">
-    <path d="M13 5l6 6-8 8H5v-6z"/><path d="M16 4l4 4"/></svg>);
-  const IconZoom = () => (<svg width="22" height="22" viewBox="0 0 24 24" fill={none} stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="10" cy="10" r="6"/><path d="M21 21l-5.2-5.2"/><path d="M7 10h6M10 7v6"/></svg>);
-  const IconTrash = () => (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>);
+  const IconToolbox = ({ open }) => (
+    <svg width="22" height="22" viewBox="0 0 24 24">
+      <rect x="3" y={open ? 9 : 10} width="18" height="10" rx="2" fill="rgba(255,255,255,0.04)" stroke={stroke} strokeWidth={sw}/>
+      <rect x="4" y={open ? 6 : 8.5} width="16" height="2" rx="1" fill="rgba(255,255,255,0.08)" stroke={stroke} strokeWidth={sw}/>
+      <rect x="9" y={open ? 6.5 : 8} width="6" height="2" rx="1" fill={stroke}/>
+    </svg>
+  );
+  const IconCrosshair = () => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill={none} stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>
+    </svg>
+  );
+  const IconHand = () => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill={none} stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M7 11v-3a1.5 1.5 0 013 0v3"/><path d="M10 10V6a1.5 1.5 0 013 0v4"/>
+      <path d="M13 10V5a1.5 1.5 0 013 0v5"/><path d="M16 11v-2a1.5 1.5 0 013 0v4a5 5 0 01-5 5h-1a5 5 0 01-5-5v-2"/>
+    </svg>
+  );
+  const IconPencil = () => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill={none} stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13 5l6 6-8 8H5v-6z"/><path d="M16 4l4 4"/>
+    </svg>
+  );
+  const IconZoom = () => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill={none} stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="10" cy="10" r="6"/><path d="M21 21l-5.2-5.2"/><path d="M7 10h6M10 7v6"/>
+    </svg>
+  );
+  const IconTrash = () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+    </svg>
+  );
 
   const barBG = "rgba(31,41,55,.72)";
   const toolBoxWrap = { position: "absolute", left: 10, top: 10, zIndex: 12, display: "flex", flexDirection: "column", alignItems: "stretch" };
@@ -924,9 +1078,7 @@ function ImageViewer() {
                   )}
                 </div>
 
-                <button style={{ ...toolBtn(false), background: "rgba(127,29,29,.65)" }} onClick={deleteSelectedMarkup} disabled={!selectedMarkupId} title="Delete selected markup + comments (Del)">
-                  <IconTrash/>
-                </button>
+                <button style={{ ...toolBtn(false), background: "rgba(127,29,29,.65)" }} onClick={deleteSelectedMarkup} disabled={!selectedMarkupId} title="Delete selected markup + comments (Del)"><IconTrash/></button>
               </div>
             )}
           </div>
@@ -961,13 +1113,7 @@ function ImageViewer() {
           </select>
 
           {/* Comment text with DnD for reference image */}
-          <div
-            className={`comment-dropwrap ${isCommentDrag ? "drag-in" : ""}`}
-            onDragEnter={onCommentDragEnter}
-            onDragOver={onCommentDragOver}
-            onDragLeave={onCommentDragLeave}
-            onDrop={onCommentDrop}
-          >
+          <div className={`comment-dropwrap ${isCommentDrag ? "drag-in" : ""}`} onDragEnter={onCommentDragEnter} onDragOver={onCommentDragOver} onDragLeave={onCommentDragLeave} onDrop={onCommentDrop}>
             <textarea
               ref={commentBoxRef}
               rows={3}
@@ -987,17 +1133,7 @@ function ImageViewer() {
           </div>
           <div className="drop-hint">Tip: drag an image into the box above to attach a reference.</div>
 
-          <input
-            type="url"
-            placeholder="Link (optional, e.g. https://example.com)"
-            value={linkUrl}
-            onChange={(e) => setLinkUrl(e.target.value)}
-            className="input"
-            style={{ marginTop: 6 }}
-            aria-label="Optional link"
-          />
-
-          {/* Optional hidden picker for keyboard users (Cmd/Ctrl+O) */}
+          <input type="url" placeholder="Link (optional, e.g. https://example.com)" value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} className="input" style={{ marginTop: 6 }} aria-label="Optional link"/>
           <input id="refPick" type="file" accept="image/*" onChange={onPickRef} style={{ display: "none" }} />
 
           {refFile && (
@@ -1024,31 +1160,74 @@ function ImageViewer() {
               const all = [...serverStrokes, ...localStrokes];
               const idx = all.findIndex((m) => m.id === c.markupId);
               const isActive = c.id === selectedCommentId;
+              const isEditing = c.id === editingId;
+
               return (
                 <div
                   key={c.id}
                   ref={(el) => { if (el) commentRefs.current[c.id] = el; else delete commentRefs.current[c.id]; }}
                   className={`comment ${isActive ? "active" : ""}`}
-                  onClick={() => { setSelectedCommentId(c.id); setSelectedMarkupId(c.markupId); }}
+                  onClick={() => {
+                    if (isEditing) return;
+                    setSelectedCommentId(c.id);
+                    setSelectedMarkupId(c.markupId);
+                  }}
                 >
                   <div className="comment-head" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <div className="comment-link" style={{ flex: 1 }}>Linked to markup #{idx >= 0 ? idx + 1 : "?"}</div>
+
+                    {!isEditing && (
+                      <button className="icon" title="Edit comment" onClick={(e) => { e.stopPropagation(); startEdit(c); }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M13 5l6 6-8 8H5v-6z"/><path d="M16 4l4 4"/>
+                        </svg>
+                      </button>
+                    )}
+
                     <button className="icon danger" title="Delete comment (optionally also delete its markup)" onClick={(e) => { e.stopPropagation(); deleteComment(c.id, c.markupId); }}>
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                         <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
                       </svg>
                     </button>
                   </div>
-                  {c.text && <div style={{ marginBottom: 6 }}>{renderWithLinks(c.text)}</div>}
-                  {c.link && (
-                    <div style={{ marginBottom: 6 }}>
-                      <a href={c.link} target="_blank" rel="noreferrer noopener" className="dropbox">{c.link}</a>
+
+                  {!isEditing ? (
+                    <>
+                      {c.text && <div style={{ marginBottom: 6 }}>{renderWithLinks(c.text)}</div>}
+                      {c.link && (
+                        <div style={{ marginBottom: 6 }}>
+                          <a href={c.link} target="_blank" rel="noreferrer noopener" className="dropbox">{c.link}</a>
+                        </div>
+                      )}
+                      {c.refImageUrl && (
+                        <a href={c.refImageUrl} target="_blank" rel="noreferrer noopener">
+                          <img src={c.refImageUrl} alt="Reference" className="ref-thumb" />
+                        </a>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <textarea
+                        rows={3}
+                        className="textarea"
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEdit(); } }}
+                        placeholder="Edit comment text… (Shift+Enter = newline)"
+                        autoFocus
+                      />
+                      <input
+                        type="url"
+                        className="input"
+                        value={editLink}
+                        onChange={(e) => setEditLink(e.target.value)}
+                        placeholder="Edit link (optional)"
+                      />
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={saveEdit}>Save</button>
+                        <button className="danger" onClick={cancelEdit}>Cancel</button>
+                      </div>
                     </div>
-                  )}
-                  {c.refImageUrl && (
-                    <a href={c.refImageUrl} target="_blank" rel="noreferrer noopener">
-                      <img src={c.refImageUrl} alt="Reference" className="ref-thumb" />
-                    </a>
                   )}
                 </div>
               );
@@ -1061,7 +1240,11 @@ function ImageViewer() {
         </div>
       </aside>
 
-      {notice && <div className={`toast ${notice.type}`} role="status" aria-live="polite" style={{ position:"fixed", bottom:12, left:12 }}>{notice.msg}</div>}
+      {notice && (
+        <div className={`toast ${notice.type}`} role="status" aria-live="polite" style={{ position: "fixed", bottom: 12, left: 12 }}>
+          {notice.msg}
+        </div>
+      )}
     </div>
   );
 }
@@ -1073,14 +1256,14 @@ function Help() {
   return (
     <main className="wrap" style={{ height: "100%", overflow: "auto" }}>
       <section className="card">
-        <h2>How to use retouchRoom</h2>
+        <h2>How to use Retouch Room</h2>
         <ol style={{ lineHeight: 1.6 }}>
           <li><b>Create a project</b> — name it, optionally paste a Dropbox File Request link, click <b>Add Project</b>.</li>
           <li><b>Open the project</b> — click <b>Open</b>.</li>
           <li><b>Create a folder (round)</b> — name it (date or “Round 1”) and click <b>+ Create Folder</b>.</li>
           <li><b>Upload images</b> — drag files into the dashed box or click <b>Browse files</b>.</li>
           <li><b>Open Markup</b> — click <b>Open Markup</b> to annotate.</li>
-          <li><b>Comments</b> — Select a markup, type your note, press <b>Enter</b> to add. Drag an image into the comment box to attach a reference.</li>
+          <li><b>Comments</b> — select a markup, type your note, press <b>Enter</b> to add. Drag an image into the comment box to attach a reference.</li>
           <li><b>Toolbox</b> — press <b>T</b> to toggle tools. Pop-outs for Pencil size, Zoom, and Color.</li>
           <li><b>Delete</b> — trash deletes the selected markup (with all its comments). Deleting a comment can also remove its linked markup.</li>
         </ol>
