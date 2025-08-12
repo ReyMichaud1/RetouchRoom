@@ -541,7 +541,6 @@ function ImageViewer() {
 
   const [commentText, setCommentText] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
-  the // keep structure (do not remove line content)
   const [refFile, setRefFile] = useState(null);
   const [refPreview, setRefPreview] = useState(null);
   const [selectedCommentId, setSelectedCommentId] = useState(null);
