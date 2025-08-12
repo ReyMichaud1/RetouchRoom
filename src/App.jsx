@@ -312,6 +312,7 @@ function Home() {
   const [projects, setProjects] = useState([]);
   const [projectName, setProjectName] = useState("");
   const [dropboxLink, setDropboxLink] = useState("");
+  the
   const [allowedRaw, setAllowedRaw] = useState(""); // comma-separated usernames or emails
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [deletingProjectId, setDeletingProjectId] = useState(null);
@@ -346,22 +347,34 @@ function Home() {
     return () => window.removeEventListener("goHome", fn);
   }, []);
 
-  /** Projects live — ONLY those where current user is allowed */
+  /** Projects live — ONLY those where current user is allowed (no orderBy; client-side sort) */
   useEffect(() => {
     if (!userEmail) return;
     const qy = query(
       collection(db, "projects"),
-      where("allowedEmails", "array-contains", userEmail),
-      orderBy("createdAt", "desc")
+      where("allowedEmails", "array-contains", userEmail)
     );
-    const stop = onSnapshot(qy, (snap) => {
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      setProjects(list);
-      if (activeProjectId && !list.find((p) => p.id === activeProjectId)) {
-        setActiveProjectId(null);
-        setActiveFolderId(null);
+    const stop = onSnapshot(
+      qy,
+      (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        // newest first (createdAt may be missing briefly; treat as 0)
+        list.sort((a, b) => {
+          const aSec = a.createdAt?.seconds ?? 0;
+          const bSec = b.createdAt?.seconds ?? 0;
+          return bSec - aSec;
+        });
+        setProjects(list);
+        if (activeProjectId && !list.find((p) => p.id === activeProjectId)) {
+          setActiveProjectId(null);
+          setActiveFolderId(null);
+        }
+      },
+      (err) => {
+        console.error("Projects query error:", err);
+        alert(err?.message || "Failed to load projects");
       }
-    });
+    );
     return () => stop();
     // eslint-disable-next-line
   }, [userEmail, activeProjectId]);
@@ -422,12 +435,14 @@ function Home() {
         dropbox: dropboxLink.trim() || null,
         ownerUid: auth.currentUser?.uid || null,
         ownerEmail: userEmail || null,
-        allowedEmails: allowed, // <— access control
+        allowedEmails: allowed,
         createdAt: serverTimestamp(),
       });
       setProjectName("");
       setDropboxLink("");
       setAllowedRaw("");
+      setActiveProjectId(null);
+      setActiveFolderId(null);
       showNotice(`Created project “${name}” ✅`, "ok");
     } catch (e) {
       alert(e.message || "Failed to create project");
@@ -475,7 +490,6 @@ function Home() {
         name,
         createdAt: serverTimestamp(),
       });
-      // Do NOT auto-enter
       showNotice(`Created ${name} ✅ (click to open)`, "ok");
     } catch (e) {
       alert(e.message || "Failed to create round.");
