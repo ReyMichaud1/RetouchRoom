@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { HashRouter, Routes, Route, Link, useParams, useNavigate } from "react-router-dom";
-import { db } from "./firebase";
+import { HashRouter, Routes, Route, Link, Navigate, useLocation, useParams, useNavigate } from "react-router-dom";
+import { db, auth } from "./firebase";
 import {
   collection,
   addDoc,
@@ -15,6 +15,12 @@ import {
   getDocs,
   where,
 } from "firebase/firestore";
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+} from "firebase/auth";
 
 /** Cloudinary (unsigned) */
 const CLOUD_NAME = "dwcgdkoxd";
@@ -25,30 +31,131 @@ const CLOUD_ROOT = "retouch";
 const isoDate = (d = new Date()) => d.toISOString().slice(0, 10);
 
 /* ────────────────────────────────────────────────────────────────
-   Root App
+   Root App + Auth Guard
 ──────────────────────────────────────────────────────────────── */
 export default function App() {
+  const [user, setUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+
+  useEffect(() => {
+    const off = onAuthStateChanged(auth, (u) => {
+      setUser(u || null);
+      setAuthReady(true);
+    });
+    return () => off();
+  }, []);
+
+  function RequireAuth({ children }) {
+    const location = useLocation();
+    if (!authReady) return <div style={{ padding: 24 }}>Loading…</div>;
+    if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
+    return children;
+  }
+
+  const doSignOut = async () => {
+    try { await signOut(auth); } catch (e) { alert(e.message || "Sign out failed"); }
+  };
+
   return (
     <HashRouter>
       <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
         <header className="topbar">
           <div className="brand">retouchRoom — Client Markups</div>
           <nav className="nav">
-            <Link to="/" className="navlink">Home</Link>
-            <span className="dot">•</span>
-            <Link to="/help" className="navlink">Help</Link>
+            {user ? (
+              <>
+                <Link to="/" className="navlink">Home</Link>
+                <span className="dot">•</span>
+                <Link to="/help" className="navlink">Help</Link>
+                <span className="dot">•</span>
+                <span className="navlink" style={{ opacity: .8 }}>{user.email}</span>
+                <button className="danger" style={{ marginLeft: 8 }} onClick={doSignOut}>Sign out</button>
+              </>
+            ) : (
+              <Link to="/login" className="navlink">Sign in</Link>
+            )}
           </nav>
         </header>
 
         <div style={{ flex: 1, minHeight: 0 }}>
           <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/view/:projectId/:folderId/:imageId" element={<ImageViewer />} />
-            <Route path="/help" element={<Help />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/" element={<RequireAuth><Home /></RequireAuth>} />
+            <Route path="/view/:projectId/:folderId/:imageId" element={<RequireAuth><ImageViewer /></RequireAuth>} />
+            <Route path="/help" element={<RequireAuth><Help /></RequireAuth>} />
           </Routes>
         </div>
       </div>
     </HashRouter>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Login (Email/Password)
+──────────────────────────────────────────────────────────────── */
+function Login() {
+  const nav = useNavigate();
+  const location = useLocation();
+  const from = location.state?.from?.pathname || "/";
+
+  const [mode, setMode] = useState("signin"); // 'signin' | 'signup'
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    setErr("");
+    setBusy(true);
+    try {
+      if (mode === "signin") {
+        await signInWithEmailAndPassword(auth, email.trim(), pw);
+      } else {
+        await createUserWithEmailAndPassword(auth, email.trim(), pw);
+      }
+      nav(from, { replace: true });
+    } catch (e) {
+      setErr(e.message || "Authentication failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="wrap" style={{ height: "100%", display: "grid", placeItems: "center" }}>
+      <form className="card" onSubmit={onSubmit} style={{ minWidth: 340, maxWidth: 420 }}>
+        <h2 style={{ marginBottom: 12 }}>{mode === "signin" ? "Sign in" : "Create account"}</h2>
+        <input
+          type="email"
+          placeholder="Email"
+          value={email}
+          autoComplete="email"
+          onChange={(e) => setEmail(e.target.value)}
+          required
+        />
+        <input
+          type="password"
+          placeholder="Password (min 6 chars)"
+          value={pw}
+          autoComplete={mode === "signin" ? "current-password" : "new-password"}
+          onChange={(e) => setPw(e.target.value)}
+          minLength={6}
+          required
+          style={{ marginTop: 8 }}
+        />
+        {err && <div className="muted" style={{ color: "#ef4444", marginTop: 8 }}>{err}</div>}
+
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button type="submit" disabled={busy}>
+            {busy ? (mode === "signin" ? "Signing in…" : "Creating…") : (mode === "signin" ? "Sign in" : "Create account")}
+          </button>
+          <button type="button" onClick={() => setMode(mode === "signin" ? "signup" : "signin")} disabled={busy}>
+            {mode === "signin" ? "Need an account?" : "Have an account?"}
+          </button>
+        </div>
+      </form>
+    </main>
   );
 }
 
@@ -59,7 +166,7 @@ function Home() {
   // Projects
   const [projects, setProjects] = useState([]);
   const [projectName, setProjectName] = useState("");
-  the const [dropboxLink, setDropboxLink] = useState("");
+  const [dropboxLink, setDropboxLink] = useState("");
   const [activeProjectId, setActiveProjectId] = useState(null);
 
   // Folders
@@ -72,6 +179,7 @@ function Home() {
   const [images, setImages] = useState([]);
 
   // Upload UI + toast
+  the // (harmless comment to preserve structure)
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
@@ -91,7 +199,6 @@ function Home() {
       if (activeProjectId && !list.find((p) => p.id === activeProjectId)) setActiveProjectId(null);
     });
     return () => stop();
-    // eslint-disable-next-line
   }, [activeProjectId]);
 
   /** Folders live */
@@ -308,7 +415,7 @@ function Home() {
                 onChange={(e) => handleUpload(e.target.files)}
               />
               <small className="muted" style={{ display: "block", marginTop: 8 }}>
-                Cloudinary path: <code>{CLOUD_ROOT}/{activeProjectId}/{activeFolder.name}</code>
+                Cloudinary path: <code>{CLOUD_ROOT}/{activeProjectId}/{activeFolder?.name}</code>
               </small>
             </div>
           </section>
@@ -676,7 +783,6 @@ function ImageViewer() {
 
     setCommentText(""); setLinkUrl(""); clearRef();
     showNotice("Comment added ✅", "ok");
-    // re-focus the textarea for fast entry
     commentBoxRef.current?.focus();
   };
 
@@ -768,7 +874,7 @@ function ImageViewer() {
     </svg>
   );
 
-  // Styles for toolbox + popouts (inline)
+  // Styles (inline)
   const barBG = "rgba(31,41,55,.72)";
   const toolBoxWrap = {
     position: "absolute", left: 10, top: 10, zIndex: 12,
@@ -830,26 +936,21 @@ function ImageViewer() {
             onPointerUp={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header button toggles open/closed */}
             <div style={toolHeader} onClick={() => setToolboxOpen((s) => !s)} title="Toggle tools (T)">
               <IconToolbox open={toolboxOpen} />
               <span style={{ fontSize: 12, color: "#e5e7eb" }}>{toolboxOpen ? "Tools" : "Tools"}</span>
             </div>
 
-            {/* Vertical bar */}
             {toolboxOpen && (
               <div style={drawer}>
-                {/* Select (crosshair) */}
                 <button style={toolBtn(mode === "select")} onClick={() => { setMode("select"); setActivePopout(null); }} title="Select (V)">
                   <IconCrosshair/>
                 </button>
 
-                {/* Hand (pan) */}
                 <button style={toolBtn(mode === "pan")} onClick={() => { setMode("pan"); setActivePopout(null); }} title="Hand (H)">
                   <IconHand/>
                 </button>
 
-                {/* Pencil with size popout */}
                 <div style={{ position: "relative" }}>
                   <button style={toolBtn(mode === "draw")} onClick={() => { setMode("draw"); setActivePopout(activePopout === "pencil" ? null : "pencil"); }} title="Pencil (B)">
                     <IconPencil/>
@@ -863,7 +964,6 @@ function ImageViewer() {
                   )}
                 </div>
 
-                {/* Magnifier with zoom popout */}
                 <div style={{ position: "relative" }}>
                   <button style={toolBtn(false)} onClick={() => setActivePopout(activePopout === "zoom" ? null : "zoom")} title="Zoom">
                     <IconZoom/>
@@ -877,7 +977,6 @@ function ImageViewer() {
                   )}
                 </div>
 
-                {/* Color swatch with popout — shows current color */}
                 <div style={{ position: "relative" }}>
                   <button style={colorBtn()} onClick={() => setActivePopout(activePopout === "color" ? null : "color")} title="Color">
                     <div style={colorDot(color)} />
@@ -897,7 +996,6 @@ function ImageViewer() {
                   )}
                 </div>
 
-                {/* Delete selected markup */}
                 <button
                   style={{ ...toolBtn(false), background: "rgba(127,29,29,.65)" }}
                   onClick={deleteSelectedMarkup}
@@ -972,7 +1070,6 @@ function ImageViewer() {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                // only try if the button would be enabled
                 const canAdd = !!selectedMarkupId && !!(commentText.trim() || linkUrl.trim() || refFile);
                 if (canAdd) addComment();
               }
@@ -1038,7 +1135,6 @@ function ImageViewer() {
                 >
                   <div className="comment-head" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <div className="comment-link" style={{ flex: 1 }}>Linked to markup #{idx >= 0 ? idx + 1 : "?"}</div>
-                    {/* delete comment (asks whether to delete its markup as well) */}
                     <button className="icon danger" title="Delete comment (optionally also delete its markup)" onClick={(e) => { e.stopPropagation(); deleteComment(c.id, c.markupId); }}>
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                         <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
