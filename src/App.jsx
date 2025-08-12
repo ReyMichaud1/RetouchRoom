@@ -179,7 +179,7 @@ function Home() {
   const [images, setImages] = useState([]);
 
   // Upload UI + toast
-  the // (harmless comment to preserve structure)
+ // (harmless comment to preserve structure)
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
