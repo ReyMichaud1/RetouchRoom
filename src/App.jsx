@@ -196,6 +196,11 @@ function StyleInjector() {
       .crumbs { font-size: 13px; color: #6b7280; display: flex; gap: 6px; align-items:center; flex-wrap: wrap; }
       .crumbs a { color: #0d8dea; text-decoration: none; cursor: pointer; }
       .crumbs .sep { opacity: .6; }
+
+      .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:#0b1220; border:1px solid rgba(255,255,255,.12); color:#c7d2fe; font-size:12px; }
+      .pill .small { font-size: 11px; color: #9ca3af; }
+      .pill .rm { cursor:pointer; color:#fca5a5; }
+      .pill + .pill { margin-left: 6px; }
     `}</style>
   );
 }
@@ -233,7 +238,6 @@ function Login() {
 
   const [username, setUsername] = useState("");
   const [pw, setPw] = useState("");
-  the // ← DO NOT DELETE THIS COMMENT, USED AS A SEARCH ANCHOR IN OUR CHATS
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -270,7 +274,7 @@ function Login() {
         <h2 style={{ marginBottom: 12 }}>Sign in</h2>
         <input
           type="text"
-          placeholder="Username (e.g., Markup)"
+          placeholder="Username (e.g., Markup) or email"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           required
@@ -299,7 +303,7 @@ function Login() {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Home (Projects → Rounds → Images) with Access Control
+   Home (Projects → Rounds → Images) with Access Control + Manage Access
 ──────────────────────────────────────────────────────────────── */
 function Home() {
   const userEmail = auth.currentUser?.email || "";
@@ -430,7 +434,11 @@ function Home() {
     }
   };
 
-  const deleteProject = async (id, name) => {
+  const deleteProject = async (id, name, ownerEmail) => {
+    if (ownerEmail !== userEmail) {
+      alert("Only the project owner can delete this project.");
+      return;
+    }
     const ok = window.confirm(`Are you sure you want to delete the project “${name}”? This cannot be undone.`);
     if (!ok) return;
     try {
@@ -560,6 +568,58 @@ function Home() {
     }
   };
 
+  /* Manage Access helpers */
+  const canManageAccess = activeProject && activeProject.ownerEmail === userEmail;
+  const [addUserInput, setAddUserInput] = useState("");
+
+  const currentAllowed = (activeProject?.allowedEmails || []).slice().sort();
+  const addAllowedUser = async () => {
+    if (!activeProject) return;
+    const asEmailList = addUserInput
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((t) => (t.includes("@") ? t.toLowerCase() : `${t.toLowerCase()}@${SHARED_DOMAIN}`));
+
+    if (asEmailList.length === 0) return;
+
+    const updated = Array.from(new Set([...currentAllowed, ...asEmailList]));
+    if (!updated.includes(activeProject.ownerEmail)) updated.push(activeProject.ownerEmail);
+
+    try {
+      await updateDoc(doc(db, "projects", activeProject.id), {
+        allowedEmails: updated,
+        updatedAt: serverTimestamp(),
+      });
+      setAddUserInput("");
+      showNotice(`Access updated ✅`, "ok");
+    } catch (e) {
+      alert(e.message || "Failed to update access");
+    }
+  };
+
+  const removeAllowedUser = async (email) => {
+    if (!activeProject) return;
+    if (email === activeProject.ownerEmail) {
+      alert("You can’t remove the project owner.");
+      return;
+    }
+    if (email === userEmail && currentAllowed.length <= 1) {
+      alert("You can’t remove the last allowed user.");
+      return;
+    }
+    const updated = currentAllowed.filter((e) => e !== email);
+    try {
+      await updateDoc(doc(db, "projects", activeProject.id), {
+        allowedEmails: updated,
+        updatedAt: serverTimestamp(),
+      });
+      showNotice(`Removed ${email} ✅`, "ok");
+    } catch (e) {
+      alert(e.message || "Failed to update access");
+    }
+  };
+
   return (
     <main className="wrap" style={{ height: "100%", overflow: "auto" }}>
       {/* Breadcrumbs */}
@@ -594,41 +654,84 @@ function Home() {
             {projects.length === 0 ? (
               <div className="muted">No projects yet — add one above, or your account is not allowed on existing projects.</div>
             ) : (
-              projects.map((p) => (
-                <div
-                  key={p.id}
-                  className="project row-click"
-                  title="Click to open project"
-                  onClick={() => { setActiveProjectId(p.id); setActiveFolderId(null); }}
-                  onKeyDown={rowKeyOpen(() => { setActiveProjectId(p.id); setActiveFolderId(null); })}
-                  role="button"
-                  tabIndex={0}
-                >
-                  <div className="project-name row-title">{p.name}</div>
-                  {p.dropbox && (
-                    <a href={p.dropbox} target="_blank" rel="noreferrer" className="dropbox" onClick={(e) => e.stopPropagation()}>
-                      Dropbox link
-                    </a>
-                  )}
-                  <div className="spacer" />
-                  <button
-                    className="danger"
-                    onClick={(e) => { e.stopPropagation(); deleteProject(p.id, p.name); }}
-                    disabled={deletingProjectId === p.id}
-                    title="Delete project"
+              projects.map((p) => {
+                const isOwner = p.ownerEmail === userEmail;
+                return (
+                  <div
+                    key={p.id}
+                    className="project row-click"
+                    title="Click to open project"
+                    onClick={() => { setActiveProjectId(p.id); setActiveFolderId(null); }}
+                    onKeyDown={rowKeyOpen(() => { setActiveProjectId(p.id); setActiveFolderId(null); })}
+                    role="button"
+                    tabIndex={0}
                   >
-                    {deletingProjectId === p.id ? "Deleting…" : "Delete"}
-                  </button>
-                </div>
-              ))
+                    <div className="project-name row-title">{p.name}</div>
+                    {p.dropbox && (
+                      <a href={p.dropbox} target="_blank" rel="noreferrer" className="dropbox" onClick={(e) => e.stopPropagation()}>
+                        Dropbox link
+                      </a>
+                    )}
+                    <div className="spacer" />
+                    {isOwner && (
+                      <button
+                        className="danger"
+                        onClick={(e) => { e.stopPropagation(); deleteProject(p.id, p.name, p.ownerEmail); }}
+                        disabled={deletingProjectId === p.id}
+                        title="Delete project"
+                      >
+                        {deletingProjectId === p.id ? "Deleting…" : "Delete"}
+                      </button>
+                    )}
+                  </div>
+                );
+              })
             )}
           </section>
         </>
       )}
 
-      {/* Rounds (Folders) */}
+      {/* Rounds (Folders) & Manage Access */}
       {activeProject && !activeFolder && (
         <>
+          {/* Manage Access (owner only) */}
+          <section className="card">
+            <h2>Manage Access for “{activeProject.name}”</h2>
+            <div style={{ margin: "6px 0 10px", display: "flex", flexWrap: "wrap", gap: 6 }}>
+              <span className="pill">
+                Owner: <strong>{activeProject.ownerEmail || "unknown"}</strong>
+              </span>
+              {(activeProject.allowedEmails || []).map((em) => (
+                <span key={em} className="pill">
+                  <span>{em}</span>
+                  {canManageAccess && em !== activeProject.ownerEmail ? (
+                    <span className="rm" onClick={() => removeAllowedUser(em)} title="Remove">✕</span>
+                  ) : (
+                    <span className="small">•</span>
+                  )}
+                </span>
+              ))}
+            </div>
+            {canManageAccess ? (
+              <>
+                <div className="row" style={{ marginTop: 6, gap: 8 }}>
+                  <input
+                    placeholder={`Add users (comma-separated usernames or emails) • @${SHARED_DOMAIN}`}
+                    value={addUserInput}
+                    onChange={(e) => setAddUserInput(e.target.value)}
+                    aria-label="Add allowed users"
+                  />
+                  <button onClick={addAllowedUser}>Add</button>
+                </div>
+                <div className="muted" style={{ marginTop: 6 }}>
+                  Hint: “ClientA” becomes <code>clienta@{SHARED_DOMAIN}</code>. You can paste multiple, separated by commas.
+                </div>
+              </>
+            ) : (
+              <div className="muted">Only the project owner can change access.</div>
+            )}
+          </section>
+
           <section className="card">
             <h2>Rounds in “{activeProject.name}”</h2>
             <div className="row" style={{ marginTop: 8 }}>
@@ -1596,7 +1699,7 @@ function Help() {
         <ol style={{ lineHeight: 1.6 }}>
           <li><b>Create a project</b> — name it, optionally paste a Dropbox File Request link, add allowed users, click <b>Add Project</b>.</li>
           <li><b>Open a project</b> — click the project row.</li>
-          <li><b>Create a round</b> — click <b>Create Round</b> to add “Round N — YYYY-MM-DD” (click a round to open it). Rename with the pencil.</li>
+          <li><b>Create a round</b> — click <b>Create Round</b> to add “Round N — {isoDate()}” (click a round to open it). Rename with the pencil.</li>
           <li><b>Upload images</b> — drag files into the dashed box or click <b>Browse files</b>.</li>
           <li><b>Open Markup</b> — click <b>Open Markup</b> on an image to annotate.</li>
           <li><b>Breadcrumbs</b> — use the trail at the top to jump back (Projects › Project › Round).</li>
