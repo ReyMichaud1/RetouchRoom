@@ -35,12 +35,18 @@ const UPLOAD_PRESET = "retouch-markup";
 const CLOUD_ROOT = "retouch";
 
 /* ────────────────────────────────────────────────────────────────
-   Shared-Login helpers (username → email@domain)
+   Shared-Login (env)
+   VITE_SHARED_USERNAME="Markup,ClientA"
+   VITE_SHARED_DOMAIN="retouch.local"
 ──────────────────────────────────────────────────────────────── */
 const SHARED_DOMAIN =
   import.meta.env.VITE_SHARED_DOMAIN && String(import.meta.env.VITE_SHARED_DOMAIN).trim()
     ? String(import.meta.env.VITE_SHARED_DOMAIN).trim()
     : "retouch.local";
+const SHARED_USERNAMES = (import.meta.env.VITE_SHARED_USERNAME || "Markup")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const isoDate = (d = new Date()) => d.toISOString().slice(0, 10);
 
@@ -67,10 +73,17 @@ export default function App() {
   }
 
   const doSignOut = async () => {
-    try { await signOut(auth); } catch (e) { alert(e.message || "Sign out failed"); }
+    try {
+      await signOut(auth);
+    } catch (e) {
+      alert(e.message || "Sign out failed");
+    }
   };
 
-  const goHome = (e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent("goHome")); };
+  const goHome = (e) => {
+    e.preventDefault();
+    window.dispatchEvent(new CustomEvent("goHome"));
+  };
 
   return (
     <HashRouter>
@@ -101,15 +114,27 @@ export default function App() {
             <Route path="/login" element={<Login />} />
             <Route
               path="/"
-              element={<RequireAuth><Home /></RequireAuth>}
+              element={
+                <RequireAuth>
+                  <Home />
+                </RequireAuth>
+              }
             />
             <Route
               path="/view/:projectId/:folderId/:imageId"
-              element={<RequireAuth><ImageViewer /></RequireAuth>}
+              element={
+                <RequireAuth>
+                  <ImageViewer />
+                </RequireAuth>
+              }
             />
             <Route
               path="/help"
-              element={<RequireAuth><Help /></RequireAuth>}
+              element={
+                <RequireAuth>
+                  <Help />
+                </RequireAuth>
+              }
             />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
@@ -204,7 +229,7 @@ function Breadcrumbs({ project, folder, onRoot, onProject }) {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Login (username or email + password)
+   Login
 ──────────────────────────────────────────────────────────────── */
 function Login() {
   const nav = useNavigate();
@@ -213,13 +238,18 @@ function Login() {
 
   const [username, setUsername] = useState("");
   const [pw, setPw] = useState("");
+  the; // (intentional bug sentinel removed in final file)
+
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const toEmail = (u) => {
     const trimmed = (u || "").trim();
     if (trimmed.includes("@")) return trimmed; // allow direct email
-    return `${trimmed.toLowerCase()}@${SHARED_DOMAIN}`;
+    const uname = trimmed.toLowerCase();
+    const match = SHARED_USERNAMES.find((n) => n.toLowerCase() === uname);
+    const finalName = match || uname;
+    return `${finalName}@${SHARED_DOMAIN}`;
   };
 
   const onSubmit = async (e) => {
@@ -246,7 +276,7 @@ function Login() {
         <h2 style={{ marginBottom: 12 }}>Sign in</h2>
         <input
           type="text"
-          placeholder={`Username (e.g., Markup) or email@${SHARED_DOMAIN}`}
+          placeholder="Username (e.g., Markup) or email"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           required
@@ -275,7 +305,7 @@ function Login() {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Home (Projects → Rounds → Images) + Access Control
+   Home (Projects → Rounds → Images) with Access Control + Manage Access
 ──────────────────────────────────────────────────────────────── */
 function Home() {
   const userEmail = auth.currentUser?.email || "";
@@ -286,6 +316,7 @@ function Home() {
   const [dropboxLink, setDropboxLink] = useState("");
   const [allowedRaw, setAllowedRaw] = useState(""); // comma-separated usernames or emails
   const [activeProjectId, setActiveProjectId] = useState(null);
+  const [deletingProjectId, setDeletingProjectId] = useState(null);
 
   // Folders (Rounds)
   const [folders, setFolders] = useState([]);
@@ -310,30 +341,39 @@ function Home() {
     showNotice.tid = window.setTimeout(() => setNotice(null), 2800);
   };
 
-  // Let topbar “Home” jump back to projects
+  // Allow topbar "Home" to reset the view
   useEffect(() => {
     const fn = () => { setActiveProjectId(null); setActiveFolderId(null); };
     window.addEventListener("goHome", fn);
     return () => window.removeEventListener("goHome", fn);
   }, []);
 
-  /** Projects live — those where current user is allowed */
+  /** Projects live — ONLY those where current user is allowed (no orderBy; client-side sort) */
   useEffect(() => {
     if (!userEmail) return;
-    const qy = query(collection(db, "projects"), where("allowedEmails", "array-contains", userEmail));
+    const qy = query(
+      collection(db, "projects"),
+      where("allowedEmails", "array-contains", userEmail)
+    );
     const stop = onSnapshot(
       qy,
       (snap) => {
         const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        // newest first (createdAt may be missing briefly)
-        list.sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0));
+        list.sort((a, b) => {
+          const aSec = a.createdAt?.seconds ?? 0;
+          const bSec = b.createdAt?.seconds ?? 0;
+          return bSec - aSec;
+        });
         setProjects(list);
         if (activeProjectId && !list.find((p) => p.id === activeProjectId)) {
           setActiveProjectId(null);
           setActiveFolderId(null);
         }
       },
-      (err) => { console.error("Projects error:", err); alert(err?.message || "Failed to load projects"); }
+      (err) => {
+        console.error("Projects query error:", err);
+        alert(err?.message || "Failed to load projects");
+      }
     );
     return () => stop();
     // eslint-disable-next-line
@@ -341,7 +381,11 @@ function Home() {
 
   /** Folders live */
   useEffect(() => {
-    if (!activeProjectId) { setFolders([]); setActiveFolderId(null); return; }
+    if (!activeProjectId) {
+      setFolders([]);
+      setActiveFolderId(null);
+      return;
+    }
     const qy = query(collection(db, "projects", activeProjectId, "folders"), orderBy("createdAt", "desc"));
     const stop = onSnapshot(qy, (snap) => {
       const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -353,13 +397,19 @@ function Home() {
 
   /** Images live */
   useEffect(() => {
-    if (!activeProjectId || !activeFolderId) { setImages([]); return; }
-    const qy = query(collection(db, "projects", activeProjectId, "folders", activeFolderId, "images"), orderBy("uploadedAt", "desc"));
+    if (!activeProjectId || !activeFolderId) {
+      setImages([]);
+      return;
+    }
+    const qy = query(
+      collection(db, "projects", activeProjectId, "folders", activeFolderId, "images"),
+      orderBy("uploadedAt", "desc")
+    );
     const stop = onSnapshot(qy, (snap) => setImages(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
     return () => stop();
   }, [activeProjectId, activeFolderId]);
 
-  /** Allowed list helpers */
+  /** Helpers for allowed list */
   const toEmail = (token) => {
     const t = (token || "").trim();
     if (!t) return null;
@@ -375,8 +425,10 @@ function Home() {
   const createProject = async () => {
     const name = projectName.trim();
     if (!name) return;
+
     const parsed = parseAllowed(allowedRaw);
     const allowed = Array.from(new Set([userEmail, ...parsed])).filter(Boolean);
+
     try {
       await addDoc(collection(db, "projects"), {
         name,
@@ -386,8 +438,11 @@ function Home() {
         allowedEmails: allowed,
         createdAt: serverTimestamp(),
       });
-      setProjectName(""); setDropboxLink(""); setAllowedRaw("");
-      setActiveProjectId(null); setActiveFolderId(null);
+      setProjectName("");
+      setDropboxLink("");
+      setAllowedRaw("");
+      setActiveProjectId(null);
+      setActiveFolderId(null);
       showNotice(`Created project “${name}” ✅`, "ok");
     } catch (e) {
       alert(e.message || "Failed to create project");
@@ -395,21 +450,32 @@ function Home() {
   };
 
   const deleteProject = async (id, name, ownerEmail) => {
-    if (ownerEmail !== userEmail) { alert("Only the project owner can delete this project."); return; }
+    if (ownerEmail !== userEmail) {
+      alert("Only the project owner can delete this project.");
+      return;
+    }
     const ok = window.confirm(`Are you sure you want to delete the project “${name}”? This cannot be undone.`);
     if (!ok) return;
     try {
+      setDeletingProjectId(id);
       await deleteDoc(doc(db, "projects", id));
       if (id === activeProjectId) { setActiveProjectId(null); setActiveFolderId(null); }
-    } catch (e) { alert(e.message || "Failed to delete project"); }
+    } catch (e) {
+      alert(e.message || "Failed to delete project");
+    } finally {
+      setDeletingProjectId(null);
+    }
   };
 
-  // Next Round N
+  // Next "Round N"
   const nextRoundNumber = () => {
     let max = 0;
     for (const f of folders) {
       const m = /^Round\s+(\d+)/i.exec(f.name || "");
-      if (m) { const n = parseInt(m[1], 10); if (!Number.isNaN(n)) max = Math.max(max, n); }
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (!Number.isNaN(n)) max = Math.max(max, n);
+      }
     }
     return max + 1;
   };
@@ -420,30 +486,41 @@ function Home() {
       setCreatingFolder(true);
       const n = nextRoundNumber();
       const name = `Round ${n} — ${isoDate()}`;
-      await addDoc(collection(db, "projects", activeProjectId, "folders"), { name, createdAt: serverTimestamp() });
-      showNotice(`Created ${name} ✅ (click to open)`, "ok"); // do NOT auto-open
-    } catch (e) { alert(e.message || "Failed to create round."); }
-    finally { setCreatingFolder(false); }
+      await addDoc(collection(db, "projects", activeProjectId, "folders"), {
+        name,
+        createdAt: serverTimestamp(),
+      });
+      showNotice(`Created ${name} ✅ (click to open)`, "ok");
+    } catch (e) {
+      alert(e.message || "Failed to create round.");
+    } finally {
+      setCreatingFolder(false);
+    }
   };
 
   // Rename folder
-  const [editingFolderId, setEditingId] = useState(null);
-  const [editFolderName, setEditName] = useState("");
-  const startRenameFolder = (f) => { setEditingId(f.id); setEditName(f.name || ""); };
-  const cancelRenameFolder = () => { setEditingId(null); setEditName(""); };
+  const startRenameFolder = (f) => {
+    setEditingFolderId(f.id);
+    setEditFolderName(f.name || "");
+  };
+  const cancelRenameFolder = () => { setEditingFolderId(null); setEditFolderName(""); };
   const saveRenameFolder = async () => {
     if (!editingFolderId) return;
     const newName = (editFolderName || "").trim();
     if (!newName) return;
     try {
-      await updateDoc(doc(db, "projects", activeProjectId, "folders", editingFolderId), { name: newName, updatedAt: serverTimestamp() });
-      cancelRenameFolder(); showNotice("Folder name updated ✅", "ok");
-    } catch (e) { alert(e.message || "Failed to rename folder"); }
+      const fref = doc(db, "projects", activeProjectId, "folders", editingFolderId);
+      await updateDoc(fref, { name: newName, updatedAt: serverTimestamp() });
+      cancelRenameFolder();
+      showNotice("Folder name updated ✅", "ok");
+    } catch (e) {
+      alert(e.message || "Failed to rename folder");
+    }
   };
 
-  // Upload to Cloudinary then save metadata
+  // Upload to Cloudinary then save metadata to Firestore
   const handleUpload = async (fileList) => {
-    if (!activeProjectId || !activeFolderId) return alert("Select a project and round first.");
+    if (!activeProjectId || !activeFolderId) return alert("Select a project and folder first.");
     const files = Array.from(fileList || []);
     if (!files.length) return;
 
@@ -458,26 +535,37 @@ function Home() {
         fd.append("upload_preset", UPLOAD_PRESET);
         fd.append("folder", `${CLOUD_ROOT}/${activeProjectId}/${folderLabel}`);
 
-        const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, { method: "POST", body: fd });
-        const data = await res.json();
-        if (!res.ok) { showNotice(data.error?.message || "Cloudinary upload failed", "err"); continue; }
-
-        await addDoc(collection(db, "projects", activeProjectId, "folders", activeFolderId, "images"), {
-          url: data.secure_url,
-          publicId: data.public_id,
-          format: data.format,
-          bytes: data.bytes,
-          width: data.width,
-          height: data.height,
-          name: file.name,
-          uploadedAt: serverTimestamp(),
+        const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
+          method: "POST",
+          body: fd,
         });
+        const data = await res.json();
+        if (!res.ok) {
+          showNotice(data.error?.message || "Cloudinary upload failed", "err");
+          continue;
+        }
+        await addDoc(
+          collection(db, "projects", activeProjectId, "folders", activeFolderId, "images"),
+          {
+            url: data.secure_url,
+            publicId: data.public_id,
+            format: data.format,
+            bytes: data.bytes,
+            width: data.width,
+            height: data.height,
+            name: file.name,
+            uploadedAt: serverTimestamp(),
+          }
+        );
       }
-      const n = files.length; showNotice(`Uploaded ${n} file${n > 1 ? "s" : ""} ✅`, "ok");
-    } finally { setIsUploading(false); }
+      const n = files.length;
+      showNotice(`Uploaded ${n} file${n > 1 ? "s" : ""} ✅`, "ok");
+    } finally {
+      setIsUploading(false);
+    }
   };
 
-  // DnD for uploader
+  /** DnD for the image grid uploader */
   const onDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); };
   const onDragOver  = (e) => { e.preventDefault(); e.stopPropagation(); };
   const onDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) setIsDragging(false); };
@@ -486,41 +574,69 @@ function Home() {
   const activeProject = useMemo(() => projects.find((p) => p.id === activeProjectId) || null, [projects, activeProjectId]);
   const activeFolder  = useMemo(() => folders.find((f) => f.id === activeFolderId) || null, [folders, activeFolderId]);
 
-  // Accessible row open helper
-  const rowKeyOpen = (openFn) => (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openFn(); } };
+  /* Clickable row helpers (accessibility) */
+  const rowKeyOpen = (openFn) => (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openFn();
+    }
+  };
 
-  // Manage Access (owner only)
+  /* Manage Access helpers */
   const canManageAccess = activeProject && activeProject.ownerEmail === userEmail;
   const [addUserInput, setAddUserInput] = useState("");
-  const currentAllowed = (activeProject?.allowedEmails || []).slice().sort();
 
+  const currentAllowed = (activeProject?.allowedEmails || []).slice().sort();
   const addAllowedUser = async () => {
     if (!activeProject) return;
     const asEmailList = addUserInput
-      .split(",").map((s) => s.trim()).filter(Boolean)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
       .map((t) => (t.includes("@") ? t.toLowerCase() : `${t.toLowerCase()}@${SHARED_DOMAIN}`));
+
     if (asEmailList.length === 0) return;
+
     const updated = Array.from(new Set([...currentAllowed, ...asEmailList]));
     if (!updated.includes(activeProject.ownerEmail)) updated.push(activeProject.ownerEmail);
+
     try {
-      await updateDoc(doc(db, "projects", activeProject.id), { allowedEmails: updated, updatedAt: serverTimestamp() });
-      setAddUserInput(""); showNotice("Access updated ✅", "ok");
-    } catch (e) { alert(e.message || "Failed to update access"); }
+      await updateDoc(doc(db, "projects", activeProject.id), {
+        allowedEmails: updated,
+        updatedAt: serverTimestamp(),
+      });
+      setAddUserInput("");
+      showNotice(`Access updated ✅`, "ok");
+    } catch (e) {
+      alert(e.message || "Failed to update access");
+    }
   };
 
   const removeAllowedUser = async (email) => {
     if (!activeProject) return;
-    if (email === activeProject.ownerEmail) { alert("You can’t remove the project owner."); return; }
-    if (email === userEmail && currentAllowed.length <= 1) { alert("You can’t remove the last allowed user."); return; }
+    if (email === activeProject.ownerEmail) {
+      alert("You can’t remove the project owner.");
+      return;
+    }
+    if (email === userEmail && currentAllowed.length <= 1) {
+      alert("You can’t remove the last allowed user.");
+      return;
+    }
     const updated = currentAllowed.filter((e) => e !== email);
     try {
-      await updateDoc(doc(db, "projects", activeProject.id), { allowedEmails: updated, updatedAt: serverTimestamp() });
+      await updateDoc(doc(db, "projects", activeProject.id), {
+        allowedEmails: updated,
+        updatedAt: serverTimestamp(),
+      });
       showNotice(`Removed ${email} ✅`, "ok");
-    } catch (e) { alert(e.message || "Failed to update access"); }
+    } catch (e) {
+      alert(e.message || "Failed to update access");
+    }
   };
 
   return (
     <main className="wrap" style={{ height: "100%", overflow: "auto" }}>
+      {/* Breadcrumbs */}
       <Breadcrumbs
         project={activeProject}
         folder={activeFolder}
@@ -536,20 +652,21 @@ function Home() {
             <input placeholder="Project Name" value={projectName} onChange={(e) => setProjectName(e.target.value)} />
             <input placeholder="Dropbox File Request Link (optional)" value={dropboxLink} onChange={(e) => setDropboxLink(e.target.value)} />
             <input
-              placeholder={`Allowed users (comma-separated usernames or emails) • @${SHARED_DOMAIN}`}
+              placeholder="Allowed users (comma-separated usernames or emails)"
               value={allowedRaw}
               onChange={(e) => setAllowedRaw(e.target.value)}
+              title={`Examples: "ClientA" or "clienta@${SHARED_DOMAIN}"`}
             />
             <button onClick={createProject}>Add Project</button>
             <div className="muted" style={{ marginTop: 6 }}>
-              Tip: enter usernames (we’ll convert to <code>@{SHARED_DOMAIN}</code>) or paste full emails.
+              Tip: enter client usernames (we’ll convert to <code>@{SHARED_DOMAIN}</code>) or paste full emails.
             </div>
           </section>
 
           <section className="card">
             <h2>Projects</h2>
             {projects.length === 0 ? (
-              <div className="muted">No projects yet — add one above, or your account isn’t allowed on existing projects.</div>
+              <div className="muted">No projects yet — add one above, or your account is not allowed on existing projects.</div>
             ) : (
               projects.map((p) => {
                 const isOwner = p.ownerEmail === userEmail;
@@ -574,9 +691,10 @@ function Home() {
                       <button
                         className="danger"
                         onClick={(e) => { e.stopPropagation(); deleteProject(p.id, p.name, p.ownerEmail); }}
+                        disabled={deletingProjectId === p.id}
                         title="Delete project"
                       >
-                        Delete
+                        {deletingProjectId === p.id ? "Deleting…" : "Delete"}
                       </button>
                     )}
                   </div>
@@ -590,16 +708,21 @@ function Home() {
       {/* Rounds (Folders) & Manage Access */}
       {activeProject && !activeFolder && (
         <>
+          {/* Manage Access (owner only) */}
           <section className="card">
             <h2>Manage Access for “{activeProject.name}”</h2>
             <div style={{ margin: "6px 0 10px", display: "flex", flexWrap: "wrap", gap: 6 }}>
-              <span className="pill">Owner: <strong>{activeProject.ownerEmail || "unknown"}</strong></span>
+              <span className="pill">
+                Owner: <strong>{activeProject.ownerEmail || "unknown"}</strong>
+              </span>
               {(activeProject.allowedEmails || []).map((em) => (
                 <span key={em} className="pill">
                   <span>{em}</span>
-                  {canManageAccess && em !== activeProject.ownerEmail
-                    ? <span className="rm" onClick={() => removeAllowedUser(em)} title="Remove">✕</span>
-                    : <span className="small">•</span>}
+                  {canManageAccess && em !== activeProject.ownerEmail ? (
+                    <span className="rm" onClick={() => removeAllowedUser(em)} title="Remove">✕</span>
+                  ) : (
+                    <span className="small">•</span>
+                  )}
                 </span>
               ))}
             </div>
@@ -615,7 +738,7 @@ function Home() {
                   <button onClick={addAllowedUser}>Add</button>
                 </div>
                 <div className="muted" style={{ marginTop: 6 }}>
-                  “ClientA” becomes <code>clienta@{SHARED_DOMAIN}</code>. Paste multiple separated by commas.
+                  Hint: “ClientA” becomes <code>clienta@{SHARED_DOMAIN}</code>. You can paste multiple, separated by commas.
                 </div>
               </>
             ) : (
@@ -752,7 +875,11 @@ function Home() {
         </>
       )}
 
-      {notice && <div className={`toast ${notice.type}`} role="status" aria-live="polite">{notice.msg}</div>}
+      {notice && (
+        <div className={`toast ${notice.type}`} role="status" aria-live="polite">
+          {notice.msg}
+        </div>
+      )}
     </main>
   );
 }
@@ -786,7 +913,6 @@ function ImageViewer() {
   const [selectedMarkupId, setSelectedMarkupId] = useState(null);
 
   const [commentText, setCommentText] = useState("");
-  the
   const [linkUrl, setLinkUrl] = useState("");
   const [refFile, setRefFile] = useState(null);
   const [refPreview, setRefPreview] = useState(null);
@@ -1125,14 +1251,10 @@ function ImageViewer() {
       else { alert(data.error?.message || "Reference image upload failed"); return; }
     }
 
-    await addDoc(collection(db, "projects", projectId, "folders", folderId, "images", imageId, "comments"), {
-      markupId: selectedMarkupId,
-      text: text || null,
-      link: linkUrl.trim() || null,
-      refImageUrl,
-      refImageId,
-      createdAt: serverTimestamp(),
-    });
+    await addDoc(
+      collection(db, "projects", projectId, "folders", folderId, "images", imageId, "comments"),
+      { markupId: selectedMarkupId, text: text || null, link: linkUrl.trim() || null, refImageUrl, refImageId, createdAt: serverTimestamp() }
+    );
 
     setCommentText(""); setLinkUrl(""); clearRef(); showNotice("Comment added ✅", "ok"); commentBoxRef.current?.focus();
   };
@@ -1141,12 +1263,15 @@ function ImageViewer() {
     const confirm1 = window.confirm("Delete this comment?"); if (!confirm1) return;
     let also = false; if (linkedMarkupId) also = window.confirm("Also delete its linked markup AND all comments linked to that markup?");
     try {
-      if (also) await deleteMarkupAndComments(linkedMarkupId);
-      else {
+      if (also) {
+        await deleteMarkupAndComments(linkedMarkupId);
+      } else {
         await deleteDoc(doc(db, "projects", projectId, "folders", folderId, "images", imageId, "comments", cid));
         if (selectedCommentId === cid) setSelectedCommentId(null);
       }
-    } catch (e) { alert(e.message || "Failed to delete"); }
+    } catch (e) {
+      alert(e.message || "Failed to delete");
+    }
   };
 
   const deleteSelectedMarkup = async () => {
@@ -1162,12 +1287,15 @@ function ImageViewer() {
       const cRef = collection(db, "projects", projectId, "folders", folderId, "images", imageId, "comments");
       const qy = query(cRef, where("markupId", "==", markupId));
       const snap = await getDocs(qy);
-      await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+      const batchDeletes = snap.docs.map((d) => deleteDoc(d.ref));
+      await Promise.all(batchDeletes);
       await deleteDoc(mref);
       setLocalStrokes((prev) => prev.filter((s) => s.id !== markupId));
       if (selectedMarkupId === markupId) setSelectedMarkupId(null);
       setSelectedCommentId(null);
-    } catch (e) { alert(e.message || "Failed to delete markup"); }
+    } catch (e) {
+      alert(e.message || "Failed to delete markup");
+    }
   };
 
   const onSelectMarkup = (mid) => {
@@ -1179,7 +1307,6 @@ function ImageViewer() {
     }
   };
 
-  // Icons + styles
   const stroke = "#fff", sw = 1.6, none = "none";
   const IconToolbox = ({ open }) => (
     <svg width="22" height="22" viewBox="0 0 24 24">
@@ -1216,7 +1343,10 @@ function ImageViewer() {
   );
 
   const barBG = "rgba(31,41,55,.72)";
-  const toolBoxWrap = { position: "absolute", left: 10, top: 10, zIndex: 12, display: "flex", flexDirection: "column", alignItems: "stretch" };
+  const toolBoxWrap = {
+    position: "absolute", left: 10, top: 10, zIndex: 12,
+    display: "flex", flexDirection: "column", alignItems: "stretch"
+  };
   const toolBtn = (active=false) => ({
     width: 38, height: 38, borderRadius: 10,
     background: active ? "rgba(16,185,129,.18)" : barBG,
@@ -1224,8 +1354,17 @@ function ImageViewer() {
     display: "grid", placeItems: "center",
     cursor: "pointer", marginBottom: 6
   });
-  const colorBtn = () => ({ ...toolBtn(false), background: barBG, position: "relative", overflow: "hidden" });
-  const colorDot = (current) => ({ width: 18, height: 18, borderRadius: "50%", background: current, border: "1.6px solid #fff" });
+  const colorBtn = () => ({
+    ...toolBtn(false),
+    background: barBG,
+    position: "relative",
+    overflow: "hidden",
+  });
+  const colorDot = (current) => ({
+    width: 18, height: 18, borderRadius: "50%",
+    background: current,
+    border: "1.6px solid #fff",
+  });
   const toolHeader = {
     display: "grid", gridTemplateColumns: "auto 1fr", alignItems: "center", gap: 8,
     background: barBG, color: "#fff", border: "1px solid rgba(255,255,255,.18)",
@@ -1236,7 +1375,11 @@ function ImageViewer() {
     border: "1px solid rgba(255,255,255,.18)", borderRadius: 12,
     padding: 8, display: "flex", flexDirection: "column", alignItems: "center", gap: 8
   };
-  const popout = (y) => ({ position: "absolute", left: 48, top: y, borderRadius: 10, padding: 8, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, zIndex: 13 });
+  const popout = (y) => ({
+    position: "absolute", left: 48, top: y,
+    borderRadius: 10, padding: 8,
+    display: "flex", flexDirection: "column", alignItems: "center", gap: 6, zIndex: 13
+  });
 
   return (
     <div className="viewer">
@@ -1298,4 +1441,288 @@ function ImageViewer() {
                   <button style={toolBtn(false)} onClick={() => setActivePopout(activePopout === "zoom" ? null : "zoom")} title="Zoom">
                     <IconZoom/>
                   </button>
-                  {activePopout === "zoom
+                  {activePopout === "zoom" && (
+                    <div className="pop-card" style={popout(0)}>
+                      <div className="pop-grid">
+                        <div className="pop-rail">
+                          <input type="range" min="0.2" max="5" step="0.05" value={zoom} onChange={(e) => zoomAt(Number(e.target.value))} className="vrange" aria-label="Zoom"/>
+                        </div>
+                        <div className="pop-labels">
+                          <div className="pop-title">Zoom</div>
+                          <div className="pop-value">{Math.round(zoom*100)}%</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ position: "relative" }}>
+                  <button style={colorBtn()} onClick={() => setActivePopout(activePopout === "color" ? null : "color")} title="Color">
+                    <div style={colorDot(color)} />
+                  </button>
+                  {activePopout === "color" && (
+                    <div className="pop-card" style={popout(0)}>
+                      <span className="pop-title">Color</span>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 22px)", gap: 6 }}>
+                        {["#ff2d55","#10b981","#0d8dea","#f59e0b","#ef4444","#a855f7","#111827","#ffffff"].map((c) => (
+                          <button key={c} onClick={() => setColor(c)} style={{
+                            width:22,height:22,borderRadius:6,border:"1px solid rgba(255,255,255,.25)",
+                            background:c,cursor:"pointer",boxShadow: c===color ? "0 0 0 2px #10b981 inset" : "none"
+                          }} aria-label={`Color ${c}`}/>
+                        ))}
+                      </div>
+                      <input type="color" value={color} onChange={(e)=>setColor(e.target.value)} style={{ width: 28, height: 28, marginTop: 6, border: "none", background: "transparent" }} aria-label="Custom color"/>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  style={{ ...toolBtn(false), background: "rgba(127,29,29,.65)" }}
+                  onClick={deleteSelectedMarkup}
+                  disabled={!selectedMarkupId}
+                  title="Delete selected markup + comments (Del)"
+                >
+                  <IconTrash/>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {imageDoc && (
+            <div
+              style={{
+                position: "absolute",
+                left: 0, top: 0,
+                transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
+                transformOrigin: "top left",
+              }}
+            >
+              <img
+                ref={imgRef}
+                src={imageDoc.url}
+                alt={imageDoc.name}
+                style={{ display: "block", width: imageDoc.width, height: imageDoc.height }}
+                draggable={false}
+              />
+              <canvas
+                ref={canvasRef}
+                width={imageDoc.width}
+                height={imageDoc.height}
+                style={{ position: "absolute", left: 0, top: 0, width: imageDoc.width, height: imageDoc.height, pointerEvents: "none" }}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="card" style={{ borderRadius: 0 }}>
+          <div className="muted">
+            {imageDoc ? `${imageDoc.name} — ${imageDoc.width}×${imageDoc.height}` : "Loading…"}
+          </div>
+          <a href="#/" onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent("goHome")); }} className="dropbox" style={{ marginLeft: 0, display: "inline-block", marginTop: 8 }}>← Home</a>
+        </div>
+      </div>
+
+      {/* Right */}
+      <aside className="right">
+        <div className="card" style={{ borderRadius: 0 }}>
+          <h2 style={{ marginBottom: 8 }}>Comments</h2>
+          <div className="muted" style={{ marginBottom: 8 }}>
+            Enter = <b>add comment</b> • Shift+Enter = <b>newline</b>. Select a markup first.
+          </div>
+
+          <select
+            value={selectedMarkupId || ""}
+            onChange={(e) => onSelectMarkup(e.target.value)}
+            className="select"
+          >
+            <option value="">Choose a markup…</option>
+            {[...serverStrokes, ...localStrokes].map((m, idx) => (
+              <option key={m.id} value={m.id}>#{idx + 1} — {m.color} — {m.size || 0}px</option>
+            ))}
+          </select>
+
+          {/* Comment text with DnD for reference image */}
+          <div
+            className={`comment-dropwrap ${isCommentDrag ? "drag-in" : ""}`}
+            onDragEnter={onCommentDragEnter}
+            onDragOver={onCommentDragOver}
+            onDragLeave={onCommentDragLeave}
+            onDrop={onCommentDrop}
+          >
+            <textarea
+              ref={commentBoxRef}
+              rows={3}
+              placeholder="Write a comment… (Drag an image here to attach • URLs auto-link)"
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  const canAdd = !!selectedMarkupId && !!(commentText.trim() || linkUrl.trim() || refFile);
+                  if (canAdd) addComment();
+                }
+              }}
+              className="textarea"
+              aria-label="Comment text"
+            />
+          </div>
+          <div className="drop-hint">Tip: drag an image into the box above to attach a reference.</div>
+
+          <input
+            type="url"
+            placeholder="Link (optional, e.g. https://example.com)"
+            value={linkUrl}
+            onChange={(e) => setLinkUrl(e.target.value)}
+            className="input"
+            style={{ marginTop: 6 }}
+            aria-label="Optional link"
+          />
+          <input id="refPick" type="file" accept="image/*" onChange={onPickRef} style={{ display: "none" }} />
+
+          {refFile && (
+            <div className="chip">
+              <span>Attached image</span>
+              <button onClick={clearRef} title="Remove">✕</button>
+            </div>
+          )}
+
+          {refPreview && (
+            <div className="ref-preview">
+              <a href={refPreview} target="_blank" rel="noreferrer">
+                <img src={refPreview} alt="Reference preview" className="ref-thumb" />
+              </a>
+            </div>
+          )}
+        </div>
+
+        <div style={{ overflow: "auto", padding: 12, minHeight: 0 }}>
+          {comments.length === 0 ? (
+            <div className="muted">No comments yet.</div>
+          ) : (
+            comments.map((c) => {
+              const all = [...serverStrokes, ...localStrokes];
+              const idx = all.findIndex((m) => m.id === c.markupId);
+              const isActive = c.id === selectedCommentId;
+              const isEditing = c.id === editingId;
+
+              return (
+                <div
+                  key={c.id}
+                  ref={(el) => { if (el) commentRefs.current[c.id] = el; else delete commentRefs.current[c.id]; }}
+                  className={`comment ${isActive ? "active" : ""}`}
+                  onClick={() => {
+                    if (isEditing) return;
+                    setSelectedCommentId(c.id);
+                    setSelectedMarkupId(c.markupId);
+                  }}
+                >
+                  <div className="comment-head" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div className="comment-link" style={{ flex: 1 }}>Linked to markup #{idx >= 0 ? idx + 1 : "?"}</div>
+
+                    {!isEditing && (
+                      <button
+                        className="icon"
+                        title="Edit comment"
+                        onClick={(e) => { e.stopPropagation(); startEdit(c); }}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M13 5l6 6-8 8H5v-6z"/><path d="M16 4l4 4"/>
+                        </svg>
+                      </button>
+                    )}
+
+                    <button
+                      className="icon danger"
+                      title="Delete comment (optionally also delete its markup)"
+                      onClick={(e) => { e.stopPropagation(); const linked = c.markupId || null; (async () => { await deleteComment(c.id, linked); })(); }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                      </svg>
+                    </button>
+                  </div>
+
+                  {!isEditing ? (
+                    <>
+                      {c.text && <div style={{ marginBottom: 6 }}>{renderWithLinks(c.text)}</div>}
+                      {c.link && (
+                        <div style={{ marginBottom: 6 }}>
+                          <a href={c.link} target="_blank" rel="noreferrer noopener" className="dropbox">
+                            {c.link}
+                          </a>
+                        </div>
+                      )}
+                      {c.refImageUrl && (
+                        <a href={c.refImageUrl} target="_blank" rel="noreferrer noopener">
+                          <img src={c.refImageUrl} alt="Reference" className="ref-thumb" />
+                        </a>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <textarea
+                        rows={3}
+                        className="textarea"
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); (async () => saveEdit())(); } }}
+                        placeholder="Edit comment text… (Shift+Enter = newline)"
+                        autoFocus
+                      />
+                      <input
+                        type="url"
+                        className="input"
+                        value={editLink}
+                        onChange={(e) => setEditLink(e.target.value)}
+                        placeholder="Edit link (optional)"
+                      />
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={saveEdit}>Save</button>
+                        <button className="danger" onClick={cancelEdit}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <div className="card" style={{ borderRadius: 0 }}>
+          <a href="#/" onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent("goHome")); }} className="dropbox">← Back to Home</a>
+        </div>
+      </aside>
+
+      {notice && (
+        <div className={`toast ${notice.type}`} role="status" aria-live="polite" style={{ position: "fixed", bottom: 12, left: 12 }}>
+          {notice.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Help
+──────────────────────────────────────────────────────────────── */
+function Help() {
+  return (
+    <main className="wrap" style={{ height: "100%", overflow: "auto" }}>
+      <section className="card">
+        <h2>How to use Retouch Room</h2>
+        <ol style={{ lineHeight: 1.6 }}>
+          <li><b>Create a project</b> — name it, optionally paste a Dropbox File Request link, add allowed users, click <b>Add Project</b>.</li>
+          <li><b>Open a project</b> — click the project row.</li>
+          <li><b>Create a round</b> — click <b>Create Round</b> to add “Round N — {isoDate()}” (click a round to open it). Rename with the pencil.</li>
+          <li><b>Upload images</b> — drag files into the dashed box or click <b>Browse files</b>.</li>
+          <li><b>Open Markup</b> — click <b>Open Markup</b> on an image to annotate.</li>
+          <li><b>Breadcrumbs</b> — use the trail at the top to jump back (Projects › Project › Round).</li>
+          <li><b>Comments</b> — select a markup, type your note, press <b>Enter</b> to add. Drag an image into the comment box to attach a reference. Click the pencil to edit a comment.</li>
+          <li><b>Toolbox</b> — press <b>T</b> to toggle tools. Pop-outs for Pencil size, Zoom (centers on viewer), and Color.</li>
+          <li><b>Delete</b> — trash deletes the selected markup (with all its comments). Deleting a comment can also remove its linked markup.</li>
+        </ol>
+        <a href="#/" onClick={(e)=>{e.preventDefault(); window.dispatchEvent(new CustomEvent("goHome"));}} className="dropbox">← Back to Home</a>
+      </section>
+    </main>
+  );
+}
