@@ -666,7 +666,6 @@ function ImageViewer() {
   const offsetStart = useRef({ x: 0, y: 0 });
 
   // Toolbox open/close + active popout
-  the // keep structure (do not remove line content)
   const [toolboxOpen, setToolboxOpen] = useState(true);
   const [activePopout, setActivePopout] = useState(null); // "zoom" | "pencil" | "color" | null
 
