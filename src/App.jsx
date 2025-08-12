@@ -35,8 +35,8 @@ const UPLOAD_PRESET = "retouch-markup";
 const CLOUD_ROOT = "retouch";
 
 /* ────────────────────────────────────────────────────────────────
-   Shared-Login via env (set in Vercel → Environment Variables)
-   VITE_SHARED_USERNAME="Markup,ClientA"  (comma list allowed)
+   Shared-Login (env)
+   VITE_SHARED_USERNAME="Markup,ClientA"
    VITE_SHARED_DOMAIN="retouch.local"
 ──────────────────────────────────────────────────────────────── */
 const SHARED_DOMAIN =
@@ -48,9 +48,6 @@ const SHARED_USERNAMES = (import.meta.env.VITE_SHARED_USERNAME || "Markup")
   .map((s) => s.trim())
   .filter(Boolean);
 
-/* ────────────────────────────────────────────────────────────────
-   Helpers
-──────────────────────────────────────────────────────────────── */
 const isoDate = (d = new Date()) => d.toISOString().slice(0, 10);
 
 /* ────────────────────────────────────────────────────────────────
@@ -83,16 +80,23 @@ export default function App() {
     }
   };
 
+  const goHome = (e) => {
+    e.preventDefault();
+    window.dispatchEvent(new CustomEvent("goHome"));
+  };
+
   return (
     <HashRouter>
       <StyleInjector />
       <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
         <header className="topbar">
-          <div className="brand">Retouch Room - Markups</div>
+          <a href="#/" className="brand" onClick={goHome} style={{ textDecoration: "none", color: "inherit" }}>
+            Retouch Room - Markups
+          </a>
           <nav className="nav">
             {user ? (
               <>
-                <Link to="/" className="navlink">Home</Link>
+                <a href="#/" className="navlink" onClick={goHome}>Home</a>
                 <span className="dot">•</span>
                 <Link to="/help" className="navlink">Help</Link>
                 <span className="dot">•</span>
@@ -132,6 +136,7 @@ export default function App() {
                 </RequireAuth>
               }
             />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
       </div>
@@ -140,7 +145,7 @@ export default function App() {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Tiny CSS injector (sliders/popouts/comment DnD)
+   Tiny CSS injector (sliders/popouts/comment DnD + clickable rows)
 ──────────────────────────────────────────────────────────────── */
 function StyleInjector() {
   return (
@@ -163,17 +168,13 @@ function StyleInjector() {
         height: 6px; background: linear-gradient(90deg,#0ea5e9,#22d3ee);
         border-radius: 999px; box-shadow: 0 2px 10px rgba(0,0,0,.35) inset;
       }
-      .vrange::-moz-range-track {
-        height: 6px; background: linear-gradient(90deg,#0ea5e9,#22d3ee); border-radius: 999px;
-      }
+      .vrange::-moz-range-track { height: 6px; background: linear-gradient(90deg,#0ea5e9,#22d3ee); border-radius: 999px; }
       .vrange::-webkit-slider-thumb {
         -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
         background: #3b82f6; border: 2px solid #e5f0ff; margin-top: -5px; box-shadow: 0 1px 4px rgba(0,0,0,.4);
       }
-      .vrange::-moz-range-thumb {
-        width: 16px; height: 16px; border-radius: 50%;
-        background: #3b82f6; border: 2px solid #e5f0ff; box-shadow: 0 1px 4px rgba(0,0,0,.4);
-      }
+      .vrange::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: #3b82f6; border: 2px solid #e5f0ff; }
+
       .pop-grid { display: grid; grid-template-columns: 36px 1fr; align-items: center; gap: 12px; min-width: 220px; }
       .pop-rail { width: 36px; height: 170px; display: flex; align-items: center; justify-content: center; }
       .pop-labels { display: flex; flex-direction: column; gap: 6px; }
@@ -186,18 +187,44 @@ function StyleInjector() {
         background: rgba(6,182,212,0.06);
       }
       .drop-hint { font-size: 12px; color: #6b7280; margin: 6px 2px 0; }
-      .chip {
-        display:inline-flex; align-items:center; gap:6px;
-        padding:4px 8px; border-radius:999px; background:#0f172a; color:#e5e7eb;
-        border:1px solid rgba(255,255,255,.1); font-size:12px; margin-top:6px;
-      }
+      .chip { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; background:#0f172a; color:#e5e7eb; border:1px solid rgba(255,255,255,.1); font-size:12px; margin-top:6px; }
       .chip button { background:none; border:none; color:#e5e7eb; cursor:pointer; }
+
+      .row-click { cursor: pointer; border-radius: 10px; transition: background .15s ease, border-color .15s ease; }
+      .row-click:hover { background: rgba(59,130,246,.08); }
+      .row-title { font-weight: 600; }
+      .crumbs { font-size: 13px; color: #6b7280; display: flex; gap: 6px; align-items:center; flex-wrap: wrap; }
+      .crumbs a { color: #0d8dea; text-decoration: none; cursor: pointer; }
+      .crumbs .sep { opacity: .6; }
     `}</style>
   );
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Login (Username → email mapping via env)
+   Breadcrumbs
+──────────────────────────────────────────────────────────────── */
+function Breadcrumbs({ project, folder, onRoot, onProject }) {
+  return (
+    <div className="crumbs" style={{ margin: "8px 0 16px" }}>
+      <a onClick={onRoot}>Projects</a>
+      {project && (
+        <>
+          <span className="sep">›</span>
+          <a onClick={onProject}>{project.name}</a>
+        </>
+      )}
+      {folder && (
+        <>
+          <span className="sep">›</span>
+          <span>{folder.name}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Login
 ──────────────────────────────────────────────────────────────── */
 function Login() {
   const nav = useNavigate();
@@ -206,12 +233,13 @@ function Login() {
 
   const [username, setUsername] = useState("");
   const [pw, setPw] = useState("");
+  the // ← DO NOT DELETE THIS COMMENT, USED AS A SEARCH ANCHOR IN OUR CHATS
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const toEmail = (u) => {
     const trimmed = (u || "").trim();
-    if (trimmed.includes("@")) return trimmed; // allow direct email if desired
+    if (trimmed.includes("@")) return trimmed; // allow direct email
     const uname = trimmed.toLowerCase();
     const match = SHARED_USERNAMES.find((n) => n.toLowerCase() === uname);
     const finalName = match || uname;
@@ -271,23 +299,27 @@ function Login() {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Home (Projects → Folders → Images)
+   Home (Projects → Rounds → Images) with Access Control
 ──────────────────────────────────────────────────────────────── */
 function Home() {
+  const userEmail = auth.currentUser?.email || "";
+
   // Projects
   const [projects, setProjects] = useState([]);
   const [projectName, setProjectName] = useState("");
   const [dropboxLink, setDropboxLink] = useState("");
+  const [allowedRaw, setAllowedRaw] = useState(""); // comma-separated usernames or emails
   const [activeProjectId, setActiveProjectId] = useState(null);
-
-  // Add: deleting state for confirm + spinner
   const [deletingProjectId, setDeletingProjectId] = useState(null);
 
-  // Folders
+  // Folders (Rounds)
   const [folders, setFolders] = useState([]);
-  const [folderName, setFolderName] = useState(isoDate());
   const [activeFolderId, setActiveFolderId] = useState(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
+
+  // Folder rename
+  const [editingFolderId, setEditingFolderId] = useState(null);
+  const [editFolderName, setEditFolderName] = useState("");
 
   // Images
   const [images, setImages] = useState([]);
@@ -303,16 +335,32 @@ function Home() {
     showNotice.tid = window.setTimeout(() => setNotice(null), 2800);
   };
 
-  /** Projects live */
+  // Allow topbar "Home" to reset the view
   useEffect(() => {
-    const qy = query(collection(db, "projects"), orderBy("createdAt", "desc"));
+    const fn = () => { setActiveProjectId(null); setActiveFolderId(null); };
+    window.addEventListener("goHome", fn);
+    return () => window.removeEventListener("goHome", fn);
+  }, []);
+
+  /** Projects live — ONLY those where current user is allowed */
+  useEffect(() => {
+    if (!userEmail) return;
+    const qy = query(
+      collection(db, "projects"),
+      where("allowedEmails", "array-contains", userEmail),
+      orderBy("createdAt", "desc")
+    );
     const stop = onSnapshot(qy, (snap) => {
       const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setProjects(list);
-      if (activeProjectId && !list.find((p) => p.id === activeProjectId)) setActiveProjectId(null);
+      if (activeProjectId && !list.find((p) => p.id === activeProjectId)) {
+        setActiveProjectId(null);
+        setActiveFolderId(null);
+      }
     });
     return () => stop();
-  }, [activeProjectId]);
+    // eslint-disable-next-line
+  }, [userEmail, activeProjectId]);
 
   /** Folders live */
   useEffect(() => {
@@ -344,29 +392,51 @@ function Home() {
     return () => stop();
   }, [activeProjectId, activeFolderId]);
 
+  /** Helpers for allowed list */
+  const toEmail = (token) => {
+    const t = (token || "").trim();
+    if (!t) return null;
+    if (t.includes("@")) return t.toLowerCase();
+    return `${t.toLowerCase()}@${SHARED_DOMAIN}`;
+  };
+  const parseAllowed = (raw) => {
+    const parts = (raw || "").split(",").map((s) => s.trim()).filter(Boolean);
+    return parts.map(toEmail).filter(Boolean);
+  };
+
   /** Actions */
   const createProject = async () => {
     const name = projectName.trim();
     if (!name) return;
-    const ref = await addDoc(collection(db, "projects"), {
-      name,
-      dropbox: dropboxLink.trim() || null,
-      createdAt: serverTimestamp(),
-    });
-    setProjectName("");
-    setDropboxLink("");
-    setActiveProjectId(ref.id);
+
+    const parsed = parseAllowed(allowedRaw);
+    const allowed = Array.from(new Set([userEmail, ...parsed])).filter(Boolean);
+
+    try {
+      await addDoc(collection(db, "projects"), {
+        name,
+        dropbox: dropboxLink.trim() || null,
+        ownerUid: auth.currentUser?.uid || null,
+        ownerEmail: userEmail || null,
+        allowedEmails: allowed, // <— access control
+        createdAt: serverTimestamp(),
+      });
+      setProjectName("");
+      setDropboxLink("");
+      setAllowedRaw("");
+      showNotice(`Created project “${name}” ✅`, "ok");
+    } catch (e) {
+      alert(e.message || "Failed to create project");
+    }
   };
 
-  // Confirm before deleting a project
   const deleteProject = async (id, name) => {
     const ok = window.confirm(`Are you sure you want to delete the project “${name}”? This cannot be undone.`);
     if (!ok) return;
-
     try {
       setDeletingProjectId(id);
       await deleteDoc(doc(db, "projects", id));
-      if (id === activeProjectId) setActiveProjectId(null);
+      if (id === activeProjectId) { setActiveProjectId(null); setActiveFolderId(null); }
     } catch (e) {
       alert(e.message || "Failed to delete project");
     } finally {
@@ -374,22 +444,55 @@ function Home() {
     }
   };
 
-  const createFolder = async () => {
-    if (!activeProjectId) return alert("Open a project first.");
-    const name = (folderName || isoDate()).trim();
-    if (!name) return;
+  // Next "Round N"
+  const nextRoundNumber = () => {
+    let max = 0;
+    for (const f of folders) {
+      const m = /^Round\s+(\d+)/i.exec(f.name || "");
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (!Number.isNaN(n)) max = Math.max(max, n);
+      }
+    }
+    return max + 1;
+  };
+
+  const createRound = async () => {
+    if (!activeProjectId) return alert("Select a project first.");
     try {
       setCreatingFolder(true);
-      const ref = await addDoc(collection(db, "projects", activeProjectId, "folders"), {
+      const n = nextRoundNumber();
+      const name = `Round ${n} — ${isoDate()}`;
+      await addDoc(collection(db, "projects", activeProjectId, "folders"), {
         name,
         createdAt: serverTimestamp(),
       });
-      setActiveFolderId(ref.id);
-      setFolderName(isoDate());
+      // Do NOT auto-enter
+      showNotice(`Created ${name} ✅ (click to open)`, "ok");
     } catch (e) {
-      alert(e.message || "Failed to create folder.");
+      alert(e.message || "Failed to create round.");
     } finally {
       setCreatingFolder(false);
+    }
+  };
+
+  // Rename folder
+  const startRenameFolder = (f) => {
+    setEditingFolderId(f.id);
+    setEditFolderName(f.name || "");
+  };
+  const cancelRenameFolder = () => { setEditingFolderId(null); setEditFolderName(""); };
+  const saveRenameFolder = async () => {
+    if (!editingFolderId) return;
+    const newName = (editFolderName || "").trim();
+    if (!newName) return;
+    try {
+      const fref = doc(db, "projects", activeProjectId, "folders", editingFolderId);
+      await updateDoc(fref, { name: newName, updatedAt: serverTimestamp() });
+      cancelRenameFolder();
+      showNotice("Folder name updated ✅", "ok");
+    } catch (e) {
+      alert(e.message || "Failed to rename folder");
     }
   };
 
@@ -440,7 +543,7 @@ function Home() {
     }
   };
 
-  /** DnD */
+  /** DnD for the image grid uploader */
   const onDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); };
   const onDragOver  = (e) => { e.preventDefault(); e.stopPropagation(); };
   const onDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) setIsDragging(false); };
@@ -449,37 +552,70 @@ function Home() {
   const activeProject = useMemo(() => projects.find((p) => p.id === activeProjectId) || null, [projects, activeProjectId]);
   const activeFolder  = useMemo(() => folders.find((f) => f.id === activeFolderId) || null, [folders, activeFolderId]);
 
+  /* Clickable row helpers (accessibility) */
+  const rowKeyOpen = (openFn) => (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openFn();
+    }
+  };
+
   return (
     <main className="wrap" style={{ height: "100%", overflow: "auto" }}>
-      {/* Projects */}
+      {/* Breadcrumbs */}
+      <Breadcrumbs
+        project={activeProject}
+        folder={activeFolder}
+        onRoot={() => { setActiveProjectId(null); setActiveFolderId(null); }}
+        onProject={() => { setActiveFolderId(null); }}
+      />
+
+      {/* Projects (root) */}
       {!activeProject && (
         <>
           <section className="card">
             <h2>Create Project</h2>
             <input placeholder="Project Name" value={projectName} onChange={(e) => setProjectName(e.target.value)} />
             <input placeholder="Dropbox File Request Link (optional)" value={dropboxLink} onChange={(e) => setDropboxLink(e.target.value)} />
+            <input
+              placeholder="Allowed users (comma-separated usernames or emails)"
+              value={allowedRaw}
+              onChange={(e) => setAllowedRaw(e.target.value)}
+              title={`Examples: "ClientA" or "clienta@${SHARED_DOMAIN}"`}
+            />
             <button onClick={createProject}>Add Project</button>
+            <div className="muted" style={{ marginTop: 6 }}>
+              Tip: enter client usernames (we’ll convert to <code>@{SHARED_DOMAIN}</code>) or paste full emails.
+            </div>
           </section>
 
           <section className="card">
             <h2>Projects</h2>
             {projects.length === 0 ? (
-              <div className="muted">No projects yet — add one above.</div>
+              <div className="muted">No projects yet — add one above, or your account is not allowed on existing projects.</div>
             ) : (
               projects.map((p) => (
-                <div key={p.id} className="project">
-                  <div className="project-name">{p.name}</div>
+                <div
+                  key={p.id}
+                  className="project row-click"
+                  title="Click to open project"
+                  onClick={() => { setActiveProjectId(p.id); setActiveFolderId(null); }}
+                  onKeyDown={rowKeyOpen(() => { setActiveProjectId(p.id); setActiveFolderId(null); })}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <div className="project-name row-title">{p.name}</div>
                   {p.dropbox && (
-                    <a href={p.dropbox} target="_blank" rel="noreferrer" className="dropbox">
+                    <a href={p.dropbox} target="_blank" rel="noreferrer" className="dropbox" onClick={(e) => e.stopPropagation()}>
                       Dropbox link
                     </a>
                   )}
                   <div className="spacer" />
-                  <button onClick={() => setActiveProjectId(p.id)}>{activeProjectId === p.id ? "Active" : "Open"}</button>
                   <button
                     className="danger"
-                    onClick={() => deleteProject(p.id, p.name)}
+                    onClick={(e) => { e.stopPropagation(); deleteProject(p.id, p.name); }}
                     disabled={deletingProjectId === p.id}
+                    title="Delete project"
                   >
                     {deletingProjectId === p.id ? "Deleting…" : "Delete"}
                   </button>
@@ -490,31 +626,71 @@ function Home() {
         </>
       )}
 
-      {/* Folders */}
+      {/* Rounds (Folders) */}
       {activeProject && !activeFolder && (
         <>
           <section className="card">
-            <h2>Folders (Rounds) in “{activeProject.name}”</h2>
+            <h2>Rounds in “{activeProject.name}”</h2>
             <div className="row" style={{ marginTop: 8 }}>
-              <input placeholder="Folder name (e.g., 2025-08-11 or Round 1)" value={folderName} onChange={(e) => setFolderName(e.target.value)} />
-              <button onClick={createFolder} disabled={creatingFolder || !folderName.trim()}>
-                {creatingFolder ? "Creating…" : "+ Create Folder"}
+              <button onClick={createRound} disabled={creatingFolder}>
+                {creatingFolder ? "Creating…" : "Create Round"}
+              </button>
+              <button className="danger" style={{ marginLeft: 8 }} onClick={() => { setActiveProjectId(null); setActiveFolderId(null); }}>
+                ← Back to Projects
               </button>
             </div>
           </section>
 
           <section className="card">
-            <h2>All Folders</h2>
+            <h2>All Rounds</h2>
             {folders.length === 0 ? (
-              <div className="muted">No folders yet — create one above.</div>
+              <div className="muted">No rounds yet — click <b>Create Round</b>.</div>
             ) : (
-              folders.map((f) => (
-                <div key={f.id} className="project">
-                  <div className="project-name">📁 {f.name}</div>
-                  <div className="spacer" />
-                  <button onClick={() => setActiveFolderId(f.id)}>Open</button>
-                </div>
-              ))
+              folders.map((f) => {
+                const isEditing = f.id === editingFolderId;
+                return (
+                  <div
+                    key={f.id}
+                    className={`project ${isEditing ? "" : "row-click"}`}
+                    {...(!isEditing ? {
+                      onClick: () => setActiveFolderId(f.id),
+                      onKeyDown: rowKeyOpen(() => setActiveFolderId(f.id)),
+                      role: "button",
+                      tabIndex: 0,
+                      title: "Click to open round"
+                    } : {})}
+                  >
+                    {!isEditing ? (
+                      <>
+                        <div className="project-name row-title">📁 {f.name}</div>
+                        <div className="spacer" />
+                        <button
+                          className="icon"
+                          title="Rename"
+                          onClick={(e) => { e.stopPropagation(); startRenameFolder(f); }}
+                          style={{ marginLeft: 8 }}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M13 5l6 6-8 8H5v-6z"/><path d="M16 4l4 4"/>
+                          </svg>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <input
+                          value={editFolderName}
+                          onChange={(e) => setEditFolderName(e.target.value)}
+                          style={{ flex: 1, marginRight: 8 }}
+                          aria-label="Folder name"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <button onClick={(e) => { e.stopPropagation(); saveRenameFolder(); }}>Save</button>
+                        <button className="danger" onClick={(e) => { e.stopPropagation(); cancelRenameFolder(); }} style={{ marginLeft: 6 }}>Cancel</button>
+                      </>
+                    )}
+                  </div>
+                );
+              })
             )}
           </section>
         </>
@@ -553,11 +729,14 @@ function Home() {
           <section className="card">
             <div className="card-head">
               <h2>Image List</h2>
-              <button onClick={() => setActiveFolderId(null)}>Back to Folders</button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setActiveFolderId(null)}>← Back to Rounds</button>
+                <button className="danger" onClick={() => { setActiveFolderId(null); setActiveProjectId(null); }}>← Back to Projects</button>
+              </div>
             </div>
 
             {images.length === 0 ? (
-              <div className="muted" style={{ marginTop: 12 }}>No images yet for this folder.</div>
+              <div className="muted" style={{ marginTop: 12 }}>No images yet for this round.</div>
             ) : (
               <div className="grid images">
                 {images.map((img) => (
@@ -589,7 +768,7 @@ function Home() {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Image Viewer (centered zoom, cyan outline, Enter=add, DnD ref, edit comments)
+   Image Viewer (zoom-at-center, cyan outline, edit comments, DnD ref)
 ──────────────────────────────────────────────────────────────── */
 function ImageViewer() {
   const { projectId, folderId, imageId } = useParams();
@@ -622,7 +801,6 @@ function ImageViewer() {
   const [refPreview, setRefPreview] = useState(null);
   const [selectedCommentId, setSelectedCommentId] = useState(null);
 
-  // edit state
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState("");
   const [editLink, setEditLink] = useState("");
@@ -634,7 +812,7 @@ function ImageViewer() {
   const offsetStart = useRef({ x: 0, y: 0 });
 
   const [toolboxOpen, setToolboxOpen] = useState(true);
-  const [activePopout, setActivePopout] = useState(null); // "zoom" | "pencil" | "color" | null
+  const [activePopout, setActivePopout] = useState(null);
 
   const [notice, setNotice] = useState(null);
   const showNotice = (msg, type = "ok") => {
@@ -757,7 +935,7 @@ function ImageViewer() {
       }
     }
 
-    // Cyan outline for selected markup (under the original stroke)
+    // Cyan outline under selected markup
     if (selectedMarkupId) {
       const sel = [...serverStrokes, ...localStrokes].find((m) => m.id === selectedMarkupId);
       if (sel && sel.path && sel.path.length > 1) {
@@ -908,7 +1086,7 @@ function ImageViewer() {
     } catch (e) { alert(e.message || "Failed to update"); }
   };
 
-  // Reference image via DnD (no visible button)
+  // Reference image via DnD
   const onPickRef = (e) => {
     const f = e.target.files?.[0];
     if (!f) { setRefFile(null); setRefPreview(null); return; }
@@ -917,7 +1095,6 @@ function ImageViewer() {
   };
   const clearRef = () => { setRefFile(null); if (refPreview) URL.revokeObjectURL(refPreview); setRefPreview(null); };
 
-  // Drag-and-drop onto the comment box
   const [isCommentDrag, setIsCommentDrag] = useState(false);
   const onCommentDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); setIsCommentDrag(true); };
   const onCommentDragOver = (e) => { e.preventDefault(); e.stopPropagation(); };
@@ -965,7 +1142,6 @@ function ImageViewer() {
     setCommentText(""); setLinkUrl(""); clearRef(); showNotice("Comment added ✅", "ok"); commentBoxRef.current?.focus();
   };
 
-  // Delete comment (optionally also delete its markup + all comments)
   const deleteComment = async (cid, linkedMarkupId) => {
     const confirm1 = window.confirm("Delete this comment?"); if (!confirm1) return;
     let also = false; if (linkedMarkupId) also = window.confirm("Also delete its linked markup AND all comments linked to that markup?");
@@ -981,13 +1157,11 @@ function ImageViewer() {
     }
   };
 
-  // Delete the selected markup (+ all comments linked to it)
   const deleteSelectedMarkup = async () => {
     if (!selectedMarkupId) return;
     await deleteMarkupAndComments(selectedMarkupId);
   };
 
-  // Delete a markup by id plus ALL comments that reference it
   const deleteMarkupAndComments = async (markupId) => {
     const proceed = window.confirm("Delete this markup and all comments linked to it?");
     if (!proceed) return;
@@ -1007,13 +1181,15 @@ function ImageViewer() {
     }
   };
 
-  // Selecting from dropdown should scroll
   const onSelectMarkup = (mid) => {
     setSelectedMarkupId(mid || null);
-    if (mid) scrollToFirstCommentFor(mid);
+    if (mid) {
+      const target = comments.find((c) => c.markupId === mid);
+      const el = target ? commentRefs.current[target.id] : null;
+      if (el?.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
   };
 
-  /* ── Icons & styles ─────────────────────────────────────────── */
   const stroke = "#fff", sw = 1.6, none = "none";
   const IconToolbox = ({ open }) => (
     <svg width="22" height="22" viewBox="0 0 24 24">
@@ -1225,7 +1401,7 @@ function ImageViewer() {
           <div className="muted">
             {imageDoc ? `${imageDoc.name} — ${imageDoc.width}×${imageDoc.height}` : "Loading…"}
           </div>
-          <Link to="/" className="dropbox" style={{ marginLeft: 0, display: "inline-block", marginTop: 8 }}>← Home</Link>
+          <a href="#/" onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent("goHome")); }} className="dropbox" style={{ marginLeft: 0, display: "inline-block", marginTop: 8 }}>← Home</a>
         </div>
       </div>
 
@@ -1318,7 +1494,7 @@ function ImageViewer() {
                   ref={(el) => { if (el) commentRefs.current[c.id] = el; else delete commentRefs.current[c.id]; }}
                   className={`comment ${isActive ? "active" : ""}`}
                   onClick={() => {
-                    if (isEditing) return; // don't steal focus while editing
+                    if (isEditing) return;
                     setSelectedCommentId(c.id);
                     setSelectedMarkupId(c.markupId);
                   }}
@@ -1330,10 +1506,7 @@ function ImageViewer() {
                       <button
                         className="icon"
                         title="Edit comment"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          startEdit(c);
-                        }}
+                        onClick={(e) => { e.stopPropagation(); startEdit(c); }}
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M13 5l6 6-8 8H5v-6z"/><path d="M16 4l4 4"/>
@@ -1344,10 +1517,7 @@ function ImageViewer() {
                     <button
                       className="icon danger"
                       title="Delete comment (optionally also delete its markup)"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteComment(c.id, c.markupId);
-                      }}
+                      onClick={(e) => { e.stopPropagation(); const linked = c.markupId || null; (async () => { await deleteComment(c.id, linked); })(); }}
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                         <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
@@ -1378,12 +1548,7 @@ function ImageViewer() {
                         className="textarea"
                         value={editText}
                         onChange={(e) => setEditText(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            saveEdit();
-                          }
-                        }}
+                        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); (async () => saveEdit())(); } }}
                         placeholder="Edit comment text… (Shift+Enter = newline)"
                         autoFocus
                       />
@@ -1407,7 +1572,7 @@ function ImageViewer() {
         </div>
 
         <div className="card" style={{ borderRadius: 0 }}>
-          <Link to="/" className="dropbox">← Back to Home</Link>
+          <a href="#/" onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent("goHome")); }} className="dropbox">← Back to Home</a>
         </div>
       </aside>
 
@@ -1429,16 +1594,17 @@ function Help() {
       <section className="card">
         <h2>How to use Retouch Room</h2>
         <ol style={{ lineHeight: 1.6 }}>
-          <li><b>Create a project</b> — name it, optionally paste a Dropbox File Request link, click <b>Add Project</b>.</li>
-          <li><b>Open the project</b> — click <b>Open</b>.</li>
-          <li><b>Create a folder (round)</b> — name it (date or “Round 1”) and click <b>+ Create Folder</b>.</li>
+          <li><b>Create a project</b> — name it, optionally paste a Dropbox File Request link, add allowed users, click <b>Add Project</b>.</li>
+          <li><b>Open a project</b> — click the project row.</li>
+          <li><b>Create a round</b> — click <b>Create Round</b> to add “Round N — YYYY-MM-DD” (click a round to open it). Rename with the pencil.</li>
           <li><b>Upload images</b> — drag files into the dashed box or click <b>Browse files</b>.</li>
-          <li><b>Open Markup</b> — click <b>Open Markup</b> to annotate.</li>
-          <li><b>Comments</b> — select a markup, type your note, press <b>Enter</b> to add. Drag an image into the comment box to attach a reference.</li>
-          <li><b>Toolbox</b> — press <b>T</b> to toggle tools. Pop-outs for Pencil size, Zoom, and Color.</li>
+          <li><b>Open Markup</b> — click <b>Open Markup</b> on an image to annotate.</li>
+          <li><b>Breadcrumbs</b> — use the trail at the top to jump back (Projects › Project › Round).</li>
+          <li><b>Comments</b> — select a markup, type your note, press <b>Enter</b> to add. Drag an image into the comment box to attach a reference. Click the pencil to edit a comment.</li>
+          <li><b>Toolbox</b> — press <b>T</b> to toggle tools. Pop-outs for Pencil size, Zoom (centers on viewer), and Color.</li>
           <li><b>Delete</b> — trash deletes the selected markup (with all its comments). Deleting a comment can also remove its linked markup.</li>
         </ol>
-        <Link to="/" className="dropbox">← Back to Home</Link>
+        <a href="#/" onClick={(e)=>{e.preventDefault(); window.dispatchEvent(new CustomEvent("goHome"));}} className="dropbox">← Back to Home</a>
       </section>
     </main>
   );
