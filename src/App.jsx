@@ -199,7 +199,7 @@ function StyleInjector() {
 
       .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:#0b1220; border:1px solid rgba(255,255,255,.12); color:#c7d2fe; font-size:12px; }
       .pill .small { font-size: 11px; color: #9ca3af; }
-      .pill .rm { cursor:pointer; color:#fca5a5; }
+      .pill .rm { cursor:pointer; color:#fca5a5; margin-left: 6px; }
       .pill + .pill { margin-left: 6px; }
     `}</style>
   );
@@ -312,7 +312,6 @@ function Home() {
   const [projects, setProjects] = useState([]);
   const [projectName, setProjectName] = useState("");
   const [dropboxLink, setDropboxLink] = useState("");
-  the
   const [allowedRaw, setAllowedRaw] = useState(""); // comma-separated usernames or emails
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [deletingProjectId, setDeletingProjectId] = useState(null);
@@ -785,7 +784,7 @@ function Home() {
                           className="icon"
                           title="Rename"
                           onClick={(e) => { e.stopPropagation(); startRenameFolder(f); }}
-                          style={{ marginLeft: 8 }}
+                          style={{ margin-left: 8 }}
                         >
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M13 5l6 6-8 8H5v-6z"/><path d="M16 4l4 4"/>
