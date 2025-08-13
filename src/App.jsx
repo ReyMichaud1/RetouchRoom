@@ -14,10 +14,11 @@ import {
   getDoc,
   getDocs,
   where,
+  updateDoc,
 } from "firebase/firestore";
 
 /* ────────────────────────────────────────────────────────────────
-   Simple shared login (no Firebase Auth for now)
+   Simple shared login (env: VITE_SHARED_USERNAME / VITE_SHARED_PASSWORD)
 ──────────────────────────────────────────────────────────────── */
 const AUTH_KEY = "rr_auth_v1";
 const SHARED_USER = import.meta.env.VITE_SHARED_USERNAME || "Markup";
@@ -70,30 +71,9 @@ export default function App() {
       <HashRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          <Route
-            path="/"
-            element={
-              <Protected>
-                <Shell><Home /></Shell>
-              </Protected>
-            }
-          />
-          <Route
-            path="/help"
-            element={
-              <Protected>
-                <Shell><Help /></Shell>
-              </Protected>
-            }
-          />
-          <Route
-            path="/view/:projectId/:folderId/:imageId"
-            element={
-              <Protected>
-                <Shell><ImageViewer /></Shell>
-              </Protected>
-            }
-          />
+          <Route path="/" element={<Protected><Shell><Home /></Shell></Protected>} />
+          <Route path="/help" element={<Protected><Shell><Help /></Shell></Protected>} />
+          <Route path="/view/:projectId/:folderId/:imageId" element={<Protected><Shell><ImageViewer /></Shell></Protected>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </HashRouter>
@@ -179,7 +159,7 @@ function Home() {
     showToast.tid = setTimeout(() => setNotice(null), 2400);
   };
 
-  // Projects (filter legacy + this user tag)
+  // Projects (filter by client tag == shared username, allow legacy with no tag)
   useEffect(() => {
     const qy = query(collection(db, "projects"), orderBy("createdAt", "desc"));
     const stop = onSnapshot(qy, (snap) => {
@@ -222,7 +202,7 @@ function Home() {
     if (!name) return;
     const payload = { name, dropbox: dropboxLink.trim() || null, client: user, createdAt: serverTimestamp() };
     const ref = await addDoc(collection(db, "projects"), payload);
-    // optimistic
+    // optimistic insert
     setProjects(prev => [{ id: ref.id, ...payload }, ...prev]);
     setProjectName(""); setDropboxLink("");
     showToast("Project created ✅");
@@ -472,6 +452,7 @@ function Help() {
           <li>Click <b>Create a Round</b> to add a folder.</li>
           <li>Open a folder, then drag & drop images into the dashed box or click <b>Browse files</b>.</li>
           <li>Click <b>Open Markup</b> on an image to annotate.</li>
+          <li>Press <b>T</b> to toggle the toolbox, <b>B</b> pencil, <b>H</b> hand, <b>V</b> select.</li>
         </ol>
         <Link to="/" className="dropbox">← Back to Home</Link>
       </section>
@@ -480,7 +461,7 @@ function Help() {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Full Image Viewer with tools
+   Image Viewer with tools + comment editing
 ──────────────────────────────────────────────────────────────── */
 function ImageViewer() {
   const { projectId, folderId, imageId } = useParams();
@@ -512,6 +493,20 @@ function ImageViewer() {
   const [refFile, setRefFile] = useState(null);
   const [refPreview, setRefPreview] = useState(null);
   const [selectedCommentId, setSelectedCommentId] = useState(null);
+
+  // Edit comment state
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState("");
+  const [editLink, setEditLink] = useState("");
+
+  const startEdit = (c) => { setEditingId(c.id); setEditText(c.text || ""); setEditLink(c.link || ""); };
+  const cancelEdit = () => { setEditingId(null); setEditText(""); setEditLink(""); };
+  const saveEdit = async () => {
+    if (!editingId) return;
+    const cref = doc(db, "projects", projectId, "folders", folderId, "images", imageId, "comments", editingId);
+    await updateDoc(cref, { text: editText.trim() || null, link: editLink.trim() || null });
+    cancelEdit();
+  };
 
   const commentRefs = useRef({});
   const didFit = useRef(false);
@@ -594,22 +589,18 @@ function ImageViewer() {
 
     const all = [...serverStrokes, ...localStrokes];
     for (const m of all) {
-      // base stroke
       drawPath(m.path, m.color, m.size);
-      // tag at center
       if (m.bbox) {
         const cx = m.bbox.x + m.bbox.w / 2, cy = m.bbox.y + m.bbox.h / 2;
         drawTag(cx, cy, comments.filter((c) => c.markupId === m.id).length);
       }
     }
 
-    // Selection outline (cyan “stroke on path” look)
+    // Selection outline (cyan behind + original color on top)
     if (selectedMarkupId) {
       const sel = all.find((m) => m.id === selectedMarkupId);
       if (sel) {
-        // cyan outline behind
-        drawPath(sel.path, "rgba(34,211,238,0.9)", (sel.size || 6) + 8); // cyan
-        // draw original again on top
+        drawPath(sel.path, "rgba(34,211,238,0.9)", (sel.size || 6) + 8);
         drawPath(sel.path, sel.color, sel.size || 6);
       }
     }
@@ -726,6 +717,7 @@ function ImageViewer() {
       if (k === "h") setMode("pan");
       if (k === "b") setMode("draw");
       if (k === "t") setToolboxOpen((s) => !s);
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") { e.preventDefault(); if (editingId) saveEdit(); }
       if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedCommentId) {
           const linked = comments.find(c => c.id === selectedCommentId)?.markupId || null;
@@ -737,7 +729,7 @@ function ImageViewer() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedMarkupId, selectedCommentId, comments]);
+  }, [selectedMarkupId, selectedCommentId, comments, editingId]);
 
   // Comment helpers
   const onPickRef = (file) => {
@@ -833,7 +825,7 @@ function ImageViewer() {
 
   const onSelectMarkup = (mid) => { setSelectedMarkupId(mid || null); if (mid) scrollToFirstCommentFor(mid); };
 
-  // Icons (white line art)
+  // Icons
   const stroke = "#fff", sw = 1.6, none = "none";
   const IconToolbox = ({ open }) => (
     <svg width="22" height="22" viewBox="0 0 24 24">
@@ -1061,22 +1053,61 @@ function ImageViewer() {
                 >
                   <div className="comment-head" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <div className="comment-link" style={{ flex: 1 }}>Linked to markup #{idx >= 0 ? idx + 1 : "?"}</div>
+
+                    {/* EDIT */}
+                    <button className="icon" title="Edit comment" onClick={(e)=>{ e.stopPropagation(); startEdit(c); }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M13 5l6 6-8 8H5v-6z"/><path d="M16 4l4 4"/>
+                      </svg>
+                    </button>
+
+                    {/* DELETE */}
                     <button className="icon danger" title="Delete comment (optionally also delete its markup)" onClick={(e)=>{ e.stopPropagation(); deleteComment(c.id, c.markupId); }}>
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                         <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
                       </svg>
                     </button>
                   </div>
-                  {c.text && <div style={{ marginBottom: 6 }}>{renderWithLinks(c.text)}</div>}
-                  {c.link && (
-                    <div style={{ marginBottom: 6 }}>
-                      <a href={c.link} target="_blank" rel="noreferrer noopener" className="dropbox">{c.link}</a>
+
+                  {/* Content or edit UI */}
+                  {editingId === c.id ? (
+                    <div style={{ marginTop: 6 }}>
+                      <textarea
+                        rows={3}
+                        className="textarea"
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") saveEdit(); }}
+                        placeholder="Edit comment text…"
+                      />
+                      <input
+                        type="url"
+                        className="input"
+                        style={{ marginTop: 6 }}
+                        value={editLink}
+                        onChange={(e) => setEditLink(e.target.value)}
+                        onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") saveEdit(); }}
+                        placeholder="Edit link (optional)"
+                      />
+                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                        <button onClick={saveEdit}>Save</button>
+                        <button className="danger" onClick={cancelEdit}>Cancel</button>
+                      </div>
                     </div>
-                  )}
-                  {c.refImageUrl && (
-                    <a href={c.refImageUrl} target="_blank" rel="noreferrer noopener">
-                      <img src={c.refImageUrl} alt="Reference" className="ref-thumb" />
-                    </a>
+                  ) : (
+                    <>
+                      {c.text && <div style={{ marginBottom: 6 }}>{renderWithLinks(c.text)}</div>}
+                      {c.link && (
+                        <div style={{ marginBottom: 6 }}>
+                          <a href={c.link} target="_blank" rel="noreferrer noopener" className="dropbox">{c.link}</a>
+                        </div>
+                      )}
+                      {c.refImageUrl && (
+                        <a href={c.refImageUrl} target="_blank" rel="noreferrer noopener">
+                          <img src={c.refImageUrl} alt="Reference" className="ref-thumb" />
+                        </a>
+                      )}
+                    </>
                   )}
                 </div>
               );
